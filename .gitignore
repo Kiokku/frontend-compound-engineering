@@ -1,5 +1,14 @@
+# OS
 .DS_Store
+
+# Logs
 *.log
+
+# Dependencies
 node_modules/
-plans/*
-compound-engineering/*
+
+# Local plans (not committed)
+plans/
+
+# Legacy plugin content
+compound-engineering/
