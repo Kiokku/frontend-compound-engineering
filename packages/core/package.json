@@ -1,0 +1,38 @@
+{
+  "name": "@compound-workflow/core",
+  "version": "0.1.0",
+  "description": "Core workflows: plan, work, review, compound",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "compound": "./bin/cli.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.js",
+    "test": "vitest"
+  },
+  "keywords": [
+    "workflow",
+    "agents",
+    "claude",
+    "cursor",
+    "qoder"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "commander": "^11.0.0",
+    "inquirer": "^9.0.0",
+    "fs-extra": "^11.0.0",
+    "glob": "^10.0.0",
+    "yaml": "^2.0.0"
+  },
+  "files": [
+    ".compound/**/*",
+    "scripts/**/*",
+    "bin/**/*",
+    "src/**/*"
+  ],
+  "license": "MIT"
+}

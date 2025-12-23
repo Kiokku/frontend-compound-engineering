@@ -1,0 +1,24 @@
+{
+  "name": "@compound-workflow/react",
+  "version": "0.1.0",
+  "description": "React-specific agents and reviewers",
+  "type": "module",
+  "main": "index.js",
+  "keywords": [
+    "react",
+    "hooks",
+    "next.js",
+    "remix"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "peerDependencies": {
+    "@compound-workflow/core": "^0.1.0",
+    "@compound-workflow/frontend-base": "^0.1.0"
+  },
+  "files": [
+    "agents/**/*"
+  ],
+  "license": "MIT"
+}

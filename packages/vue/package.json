@@ -1,0 +1,24 @@
+{
+  "name": "@compound-workflow/vue",
+  "version": "0.1.0",
+  "description": "Vue-specific agents and reviewers",
+  "type": "module",
+  "main": "index.js",
+  "keywords": [
+    "vue",
+    "vue3",
+    "composition-api",
+    "nuxt"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "peerDependencies": {
+    "@compound-workflow/core": "^0.1.0",
+    "@compound-workflow/frontend-base": "^0.1.0"
+  },
+  "files": [
+    "agents/**/*"
+  ],
+  "license": "MIT"
+}

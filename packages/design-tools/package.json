@@ -1,0 +1,23 @@
+{
+  "name": "@compound-workflow/design-tools",
+  "version": "0.1.0",
+  "description": "Design tool integrations: Figma, design system validation",
+  "type": "module",
+  "main": "index.js",
+  "keywords": [
+    "figma",
+    "design-system",
+    "responsive",
+    "ui-design"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "peerDependencies": {
+    "@compound-workflow/core": "^0.1.0"
+  },
+  "files": [
+    "agents/**/*"
+  ],
+  "license": "MIT"
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@compound-workflow/root",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Frontend development workflow toolkit - Monorepo root",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint"
+  },
+  "keywords": [
+    "workflow",
+    "agents",
+    "frontend",
+    "ai-coding",
+    "claude",
+    "cursor",
+    "qoder"
+  ],
+  "author": "Mow",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  }
+}

@@ -66,9 +66,6 @@
 **使用 pnpm workspace**:
 
 ```bash
-# 创建项目根目录
-mkdir compound-frontend-workflow
-cd compound-frontend-workflow
 
 # 初始化 pnpm workspace
 pnpm init
@@ -110,13 +107,17 @@ done
   "name": "@compound-workflow/core",
   "version": "0.1.0",
   "description": "Core workflows: plan, work, review, compound",
+  "type": "module",
   "main": "index.js",
   "bin": {
     "compound": "./bin/cli.js"
   },
   "dependencies": {
+    "commander": "^11.0.0",
     "inquirer": "^9.0.0",
-    "fs-extra": "^11.0.0"
+    "fs-extra": "^11.0.0",
+    "glob": "^10.0.0",
+    "yaml": "^2.0.0"
   }
 }
 ```
@@ -234,13 +235,13 @@ export class AgentLoader {
 
 ***
 
-## 🛡️ Phase 0.5: 错误处理策略 (贯穿全流程)
+## 🛡️ Phase 0.4: 错误处理策略 (贯穿全流程)
 
 ### 错误处理设计原则
 
 在开始核心架构搭建之前，必须先定义统一的错误处理策略，确保整个工具链具有良好的容错能力和用户体验。
 
-#### 0.5.1 错误分类体系
+#### 0.4.1 错误分类体系
 
 | 错误类型 | 严重级别 | 处理策略 | 用户提示 |
 |---------|---------|---------|----------|
@@ -250,7 +251,7 @@ export class AgentLoader {
 | `PermissionError` | 高 | 中止并提示修复 | ❌ 需要权限 |
 | `CriticalError` | 致命 | 立即中止并回滚 | 🚨 严重错误 |
 
-#### 0.5.2 统一错误处理类
+#### 0.4.2 统一错误处理类
 
 **文件**: `packages/core/src/errors.js`
 
@@ -327,7 +328,7 @@ export class AdapterError extends CompoundError {
 }
 ```
 
-#### 0.5.3 错误处理工具函数
+#### 0.4.3 错误处理工具函数
 
 **文件**: `packages/core/src/error-handler.js`
 
@@ -484,7 +485,7 @@ export async function withRetry(fn, options = {}) {
 }
 ```
 
-#### 0.5.4 集成到核心模块
+#### 0.4.4 集成到核心模块
 
 **更新 AgentLoader 以使用错误处理**:
 
@@ -575,11 +576,12 @@ cd packages/core
 
 #### 1.2 实现工具检测机制
 
-**文件**: `scripts/tool-detector.js`
+**文件**: `packages/core/src/tool-detector.js`
 
 ```javascript
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { execSync } from 'child_process';
 
 /**
@@ -589,7 +591,6 @@ import { execSync } from 'child_process';
  */
 function commandExists(command) {
   try {
-    // Windows 使用 where，Unix 系统使用 which
     const checkCommand = process.platform === 'win32' 
       ? `where ${command}` 
       : `which ${command}`;
@@ -600,34 +601,94 @@ function commandExists(command) {
   }
 }
 
-// 检测当前环境使用的工具
+/**
+ * 多层检测策略，按优先级返回检测到的工具
+ * 检测顺序: 项目配置 > 用户目录配置 > 环境变量 > 命令行工具
+ */
 export function detectTool() {
   const env = process.env;
   const cwd = process.cwd();
+  const home = os.homedir();
   
-  // 检测 Claude
-  if (env.CLAUDE_CODE || fs.existsSync(path.join(cwd, '.claude'))) {
+  // === Claude 检测 (多层) ===
+  // 1. 项目级 .claude/ 目录
+  if (fs.existsSync(path.join(cwd, '.claude'))) {
+    return 'claude';
+  }
+  // 2. 用户级 ~/.claude/ 配置
+  if (fs.existsSync(path.join(home, '.claude'))) {
+    return 'claude';
+  }
+  // 3. 环境变量 (最后检查)
+  if (env.CLAUDE_CODE) {
     return 'claude';
   }
   
-  // 检测 Cursor
-  if (env.CURSOR_WORKSPACE || fs.existsSync(path.join(cwd, '.cursorrules'))) {
+  // === Cursor 检测 (多层) ===
+  // 1. 项目级 .cursor/ 目录 (新版本)
+  if (fs.existsSync(path.join(cwd, '.cursor'))) {
+    return 'cursor';
+  }
+  // 2. 项目级 .cursorrules 文件 (旧版本兼容)
+  if (fs.existsSync(path.join(cwd, '.cursorrules'))) {
+    return 'cursor';
+  }
+  // 3. 用户级 ~/.cursor/ 配置
+  if (fs.existsSync(path.join(home, '.cursor'))) {
+    return 'cursor';
+  }
+  // 4. 环境变量
+  if (env.CURSOR_WORKSPACE) {
     return 'cursor';
   }
   
-  // 检测 Qoder
-  if (env.QODER_CLI || commandExists('qoder')) {
+  // === Qoder 检测 ===
+  // 1. 环境变量
+  if (env.QODER_CLI) {
+    return 'qoder';
+  }
+  // 2. 命令行工具存在
+  if (commandExists('qoder')) {
     return 'qoder';
   }
   
   return 'unknown';
 }
+
+/**
+ * 获取检测到的工具的详细信息
+ */
+export function getToolInfo(tool) {
+  const info = {
+    claude: {
+      name: 'Claude Code',
+      configDir: '.claude',
+      pluginDir: '~/.claude/plugins',
+      docsUrl: 'https://docs.anthropic.com/claude-code'
+    },
+    cursor: {
+      name: 'Cursor IDE',
+      configDir: '.cursor',
+      rulesDir: '.cursor/rules',
+      docsUrl: 'https://cursor.sh/docs'
+    },
+    qoder: {
+      name: 'Qoder CLI',
+      configDir: '~/.qoder',
+      commandsDir: '~/.qoder/commands',
+      docsUrl: 'https://qoder.dev/docs'
+    }
+  };
+  return info[tool] || null;
+}
 ```
 
 **验收标准**:
 
+*   [x] 多层检测策略：项目配置 > 用户配置 > 环境变量
+*   [x] 支持 Cursor 新版 `.cursor/` 目录结构
 *   [x] 准确检测 Claude/Cursor/Qoder
-*   [x] 返回工具类型或 'unknown'
+*   [x] 提供工具详细信息查询
 
 ***
 
@@ -897,17 +958,111 @@ qoder /compound:plan "添加用户登录表单"
 
 ### 2.3 Cursor 适配器
 
-**目标**: 将核心工作流转换为 Cursor Rules
+**目标**: 将核心工作流转换为 Cursor Rules (支持新版 `.cursor/rules/` 目录结构)
 
-**脚本**: `scripts/adapters/to-cursor.js`
+**脚本**: `packages/core/scripts/adapters/to-cursor.js`
 
 ```javascript
-export function convertToCursorRules() {
-  const workflows = loadAllWorkflows('.compound/core/workflows');
+import fs from 'fs-extra';
+import path from 'path';
+import yaml from 'yaml';
+
+/**
+ * 转换工作流为 Cursor Rules
+ * 支持两种模式:
+ * - 新版: .cursor/rules/*.mdc (推荐)
+ * - 旧版: .cursorrules (fallback)
+ */
+export async function convertToCursorRules(options = {}) {
+  const { useLegacy = false } = options;
+  const workflows = await loadAllWorkflows('.compound/workflows');
+  const agents = await loadAllAgents('.compound/agents');
   
-  // Cursor 使用 .cursorrules 文件(类似 system prompt)
-  const cursorRules = `
+  if (useLegacy) {
+    // 旧版模式: 单个 .cursorrules 文件
+    await generateLegacyCursorRules(workflows, agents);
+  } else {
+    // 新版模式: .cursor/rules/ 目录
+    await generateCursorRulesDir(workflows, agents);
+  }
+}
+
+/**
+ * 生成新版 .cursor/rules/ 目录结构
+ */
+async function generateCursorRulesDir(workflows, agents) {
+  const rulesDir = '.cursor/rules';
+  await fs.ensureDir(rulesDir);
+  
+  // 1. 生成工作流 rules
+  for (const workflow of workflows) {
+    const ruleContent = `---
+description: ${workflow.description}
+globs: ["**/*"]
+alwaysApply: false
+---
+
+# ${workflow.name}
+
+${workflow.content}
+`;
+    await fs.writeFile(
+      path.join(rulesDir, `compound-${workflow.name.replace(':', '-')}.mdc`),
+      ruleContent
+    );
+  }
+  
+  // 2. 生成代理 rules
+  for (const agent of agents) {
+    const ruleContent = `---
+description: ${agent.description}
+globs: ${JSON.stringify(agent.globs || ["**/*"])}
+alwaysApply: false
+---
+
+${agent.content}
+`;
+    await fs.writeFile(
+      path.join(rulesDir, `agent-${agent.name}.mdc`),
+      ruleContent
+    );
+  }
+  
+  // 3. 生成主规则文件 (始终启用)
+  const mainRule = `---
+description: Compound Frontend Workflow - Main Configuration
+globs: ["**/*"]
+alwaysApply: true
+---
+
 # Compound Frontend Workflow
+
+You are an expert frontend developer following a systematic workflow.
+
+## Available Commands
+
+${workflows.map(w => `- **${w.name}**: ${w.description}`).join('\n')}
+
+## Available Agents
+
+${agents.map(a => `- **${a.name}**: ${a.description}`).join('\n')}
+
+## Usage
+
+When the user mentions a workflow name (e.g., "plan", "review"), 
+activate the corresponding workflow rule.
+`;
+  
+  await fs.writeFile(path.join(rulesDir, 'compound-main.mdc'), mainRule);
+  
+  console.log(`✅ Generated ${workflows.length + agents.length + 1} rules in ${rulesDir}/`);
+}
+
+/**
+ * 生成旧版 .cursorrules 文件 (fallback)
+ */
+async function generateLegacyCursorRules(workflows, agents) {
+  const cursorRules = `# Compound Frontend Workflow
 
 You are an expert frontend developer following a systematic workflow.
 
@@ -917,18 +1072,34 @@ ${workflows.map(w => `
 ### ${w.name}
 ${w.description}
 
-**When user says**: "${w.name}" or requests planning
+**When user says**: "${w.name}" or requests ${w.name.split(':')[1]}
 **Then execute**:
-${w.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}
+${w.steps.map((s, i) => \`\${i + 1}. \${s}\`).join('\n')}
 `).join('\n')}
 
-## Usage
-- User: "Plan the user profile component"
-- Assistant: [Executes compound:plan workflow]
+## Available Agents
+
+${agents.map(a => `- **${a.name}**: ${a.description}`).join('\n')}
 `;
   
-  fs.writeFileSync('.cursorrules', cursorRules);
+  await fs.writeFile('.cursorrules', cursorRules);
+  console.log('✅ Generated .cursorrules (legacy mode)');
 }
+```
+
+**生成的目录结构**:
+
+```
+.cursor/
+└── rules/
+    ├── compound-main.mdc           # 主配置 (始终启用)
+    ├── compound-plan.mdc           # plan 工作流
+    ├── compound-work.mdc           # work 工作流
+    ├── compound-review.mdc         # review 工作流
+    ├── compound-compound.mdc       # compound 工作流
+    ├── agent-accessibility.mdc     # 可访问性代理
+    ├── agent-performance.mdc       # 性能代理
+    └── agent-security.mdc          # 安全代理
 ```
 
 **Cursor 安装流程**:
@@ -938,15 +1109,20 @@ npm install @compound-workflow/frontend
 npx compound-init
 
 # 输出: ✓ Detected Cursor IDE
-#       ✓ Generated .cursorrules with workflows
+#       ✓ Generated .cursor/rules/ with 8 rule files
 #       ✓ Restart Cursor to apply changes
+
+# 如果需要旧版兼容模式:
+npx compound-init --cursor-legacy
 ```
 
 **验收标准**:
 
-*   [x] 生成 `.cursorrules` 文件
-*   [x] 包含所有核心工作流的触发条件和步骤
-*   [x] Cursor 可以理解并执行工作流
+*   [x] 生成 `.cursor/rules/*.mdc` 文件 (新版格式)
+*   [x] 支持旧版 `.cursorrules` fallback
+*   [x] 每个工作流/代理独立一个 rule 文件
+*   [x] 主规则文件 `alwaysApply: true`
+*   [x] Cursor 可以识别并执行工作流
 
 ***
 
@@ -1079,43 +1255,156 @@ You are a React expert reviewer focusing on modern best practices.
 
 ## 🚀 Phase 4: 安装与代理管理 (Week 8)
 
+### 4.0 文件路径约定
+
+**明确源目录和目标目录的关系**:
+
+```
+源 (npm 包内):                          目标 (用户项目):
+────────────────────────────────────────     ────────────────────────────────
+
+packages/core/
+├── .compound/
+│   ├── workflows/           ──────────→  .compound/workflows/
+│   │   ├── plan.md
+│   │   ├── work.md
+│   │   ├── review.md
+│   │   └── compound.md
+│   └── agents/              ──────────→  .compound/agents/ (npm 包级)
+│       ├── accessibility.md
+│       ├── performance.md
+│       └── security.md
+├── scripts/
+│   ├── install.js           # postinstall 钩子
+│   ├── init.js              # npx compound-init
+│   └── adapters/
+│       ├── to-claude.js
+│       ├── to-cursor.js
+│       └── to-qoder.js
+├── src/
+│   ├── agent-loader.js
+│   ├── agent-manager.js
+│   ├── tool-detector.js
+│   ├── errors.js
+│   └── error-handler.js
+└── bin/
+    └── cli.js               # compound 命令
+
+用户项目中的结构:
+───────────────────────
+项目根目录/
+├── .compound/
+│   ├── workflows/           # 从 npm 包复制的工作流
+│   ├── agents/              # 项目级代理 (最高优先级)
+│   ├── docs/                # compound 记录的知识
+│   └── config.json          # 配置文件
+├── .cursor/                 # Cursor 适配器生成
+│   └── rules/
+└── node_modules/
+    └── @compound-workflow/
+        └── */agents/        # npm 包代理 (最低优先级)
+```
+
+**代理优先级查找顺序**:
+
+| 优先级 | 路径 | 说明 |
+|------|------|------|
+| 1 (最高) | `.compound/agents/` | 项目特定代理 |
+| 2 | `~/.compound/agents/` | 用户全局代理 |
+| 3 (最低) | `node_modules/@compound-workflow/*/agents/` | npm 包代理 |
+
+***
+
 ### 4.1 实现 postinstall 钩子
 
-**文件**: `scripts/install.js`
+**文件**: `packages/core/scripts/install.js`
 
 ```javascript
 #!/usr/bin/env node
 
-import { detectTool } from './tool-detector.js';
 import path from 'path';
-import fs from 'fs';
+import fs from 'fs-extra';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 async function install() {
   console.log('📦 Installing Compound Frontend Workflow...\n');
   
-  const projectRoot = process.cwd();
+  // 获取项目根目录 (安装时的 cwd)
+  const projectRoot = process.env.INIT_CWD || process.cwd();
   const compoundDir = path.join(projectRoot, '.compound');
   
-  // 1. 创建 .compound 目录
-  if (!fs.existsSync(compoundDir)) {
-    fs.mkdirSync(compoundDir, { recursive: true });
-    console.log('✓ Created .compound/ directory');
+  // 获取 npm 包根目录
+  const packageRoot = path.resolve(__dirname, '..');
+  const sourceCompound = path.join(packageRoot, '.compound');
+  
+  // 1. 创建 .compound 目录结构
+  await fs.ensureDir(path.join(compoundDir, 'workflows'));
+  await fs.ensureDir(path.join(compoundDir, 'agents'));
+  await fs.ensureDir(path.join(compoundDir, 'docs'));
+  console.log('✓ Created .compound/ directory structure');
+  
+  // 2. 复制工作流文件 (始终复制)
+  if (await fs.pathExists(path.join(sourceCompound, 'workflows'))) {
+    await fs.copy(
+      path.join(sourceCompound, 'workflows'),
+      path.join(compoundDir, 'workflows'),
+      { overwrite: true }
+    );
+    console.log('✓ Copied core workflows');
   }
   
-  // 2. 复制核心文件
-  const packageRoot = path.dirname(new URL(import.meta.url).pathname);
-  copyDirectory(
-    path.join(packageRoot, '../.compound/core'),
-    path.join(compoundDir, 'core')
-  );
-  console.log('✓ Copied core workflows and agents');
+  // 3. 复制核心代理 (不覆盖已存在的项目代理)
+  if (await fs.pathExists(path.join(sourceCompound, 'agents'))) {
+    const sourceAgents = await fs.readdir(path.join(sourceCompound, 'agents'));
+    for (const agent of sourceAgents) {
+      const targetPath = path.join(compoundDir, 'agents', agent);
+      // 只有当目标不存在时才复制 (保护项目级代理)
+      if (!await fs.pathExists(targetPath)) {
+        await fs.copy(
+          path.join(sourceCompound, 'agents', agent),
+          targetPath
+        );
+      }
+    }
+    console.log('✓ Copied core agents (preserved existing project agents)');
+  }
   
-  // 3. 提示运行 init
+  // 4. 创建默认配置文件
+  const configPath = path.join(compoundDir, 'config.json');
+  if (!await fs.pathExists(configPath)) {
+    await fs.writeJson(configPath, {
+      version: '0.1.0',
+      disabledAgents: [],
+      preferences: {
+        autoSuggestAgents: true,
+        verboseLogging: false
+      }
+    }, { spaces: 2 });
+    console.log('✓ Created default config.json');
+  }
+  
+  // 5. 添加到 .gitignore
+  const gitignorePath = path.join(projectRoot, '.gitignore');
+  const ignoreEntries = ['\n# Compound Workflow', '.compound/logs/', '.compound/docs/'];
+  if (await fs.pathExists(gitignorePath)) {
+    const content = await fs.readFile(gitignorePath, 'utf8');
+    if (!content.includes('.compound/logs/')) {
+      await fs.appendFile(gitignorePath, ignoreEntries.join('\n') + '\n');
+      console.log('✓ Updated .gitignore');
+    }
+  }
+  
   console.log('\n✅ Installation complete!');
-  console.log('👉 Run: npx compound-init');
+  console.log('👉 Run: npx compound init');
 }
 
-install().catch(console.error);
+install().catch(err => {
+  console.error('❌ Installation failed:', err.message);
+  process.exit(1);
+});
 ```
 
 ***
@@ -1218,21 +1507,59 @@ init().catch(console.error);
 import { program } from 'commander';
 import { AgentManager } from '../src/agent-manager.js';
 
+const agentManager = new AgentManager();
+
 program
   .name('compound')
   .description('Compound workflow CLI')
   .version('0.1.0');
 
-// 代理管理命令
-program
+// 创建 agents 子命令
+const agentsCmd = program
   .command('agents')
-  .description('Manage agents')
-  .action(() => {
-    program.command('agents list').action(listAgents);
-    program.command('agents add <name>').action(addAgent);
-    program.command('agents remove <name>').action(removeAgent);
-    program.command('agents update <name>').action(updateAgent);
-    program.parse();
+  .description('Manage agents');
+
+// agents list
+agentsCmd
+  .command('list')
+  .description('List all installed and available agents')
+  .action(async () => {
+    await agentManager.list();
+  });
+
+// agents add <name>
+agentsCmd
+  .command('add <name>')
+  .description('Add an agent from library')
+  .option('-g, --global', 'Install globally to ~/.compound/agents/')
+  .action(async (name, options) => {
+    await agentManager.add(name, options);
+  });
+
+// agents remove <name>
+agentsCmd
+  .command('remove <name>')
+  .description('Remove a project or user agent')
+  .action(async (name) => {
+    await agentManager.remove(name);
+  });
+
+// agents update <name>
+agentsCmd
+  .command('update <name>')
+  .description('Update an agent to latest version')
+  .action(async (name) => {
+    await agentManager.update(name);
+  });
+
+// init 命令
+program
+  .command('init')
+  .description('Initialize compound workflow for your AI tool')
+  .option('--cursor-legacy', 'Use legacy .cursorrules format')
+  .action(async (options) => {
+    const { init } = await import('../scripts/init.js');
+    await init(options);
   });
 
 program.parse();

@@ -1,0 +1,24 @@
+{
+  "name": "@compound-workflow/frontend",
+  "version": "0.1.0",
+  "description": "Complete frontend workflow toolkit (meta-package)",
+  "type": "module",
+  "keywords": [
+    "frontend",
+    "workflow",
+    "react",
+    "vue",
+    "ai-coding"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@compound-workflow/core": "workspace:^",
+    "@compound-workflow/frontend-base": "workspace:^",
+    "@compound-workflow/react": "workspace:^",
+    "@compound-workflow/vue": "workspace:^",
+    "@compound-workflow/design-tools": "workspace:^"
+  },
+  "license": "MIT"
+}
