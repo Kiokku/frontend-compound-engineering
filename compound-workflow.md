@@ -733,9 +733,9 @@ framework: universal  # 表示工具无关
 
 **验收标准**:
 
-*   [x] 4 个核心工作流 Markdown 文件完整
-*   [x] 包含 YAML frontmatter
-*   [x] 工作流步骤清晰可执行
+*   [x] 4 个核心工作流 Markdown 文件完整 ✅ (plan.md, work.md, review.md, compound.md)
+*   [x] 包含 YAML frontmatter ✅ (name, description, argument-hint, framework)
+*   [x] 工作流步骤清晰可执行 ✅
 
 ***
 
@@ -765,7 +765,7 @@ const techStack = detectTechStack({
   packageJson: true,
   configFiles: ['vite.config.js', 'next.config.js', 'vue.config.js']
 });
-````
+```
 
 ### 3. 代理建议引擎
 

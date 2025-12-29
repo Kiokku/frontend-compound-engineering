@@ -7,8 +7,23 @@
 # Dependencies
 node_modules/
 
+# Lock files - use pnpm-lock.yaml only (pnpm workspace)
+package-lock.json
+yarn.lock
+
 # Local plans (not committed)
 plans/
 
 # Legacy plugin content
 compound-engineering/
+
+# Compound workflow generated
+.compound/logs/
+.compound/docs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.claude/

@@ -5,6 +5,12 @@
  * 1. 项目级 (.compound/agents/) - 最高优先级
  * 2. 用户级 (~/.compound/agents/) - 中优先级
  * 3. npm 包级 (node_modules/@compound-workflow/* /agents/) - 最低优先级
+ * 
+ * 代理分类:
+ * - plan: 规划阶段代理
+ * - work: 开发阶段代理
+ * - review: 审查阶段代理
+ * - compound: 知识固化阶段代理
  */
 
 import fs from 'fs-extra';
@@ -16,6 +22,11 @@ import { glob } from 'glob';
  * 代理加载器类
  * 负责从三层路径中查找和加载代理
  */
+/**
+ * 代理分类常量
+ */
+export const AGENT_CATEGORIES = ['plan', 'work', 'review', 'compound'];
+
 export class AgentLoader {
   constructor(options = {}) {
     this.projectRoot = options.projectRoot || process.cwd();
@@ -32,32 +43,51 @@ export class AgentLoader {
   /**
    * 加载指定名称的代理
    * @param {string} name - 代理名称 (不含 .md 扩展名)
+   * @param {string} [category] - 可选的分类过滤 (plan/work/review/compound)
    * @returns {object} - { content: string, path: string, source: string }
    * @throws {Error} - 如果代理未找到
    */
-  async loadAgent(name) {
+  async loadAgent(name, category = null) {
     for (const basePath of this.searchPaths) {
       try {
-        // 处理 glob 模式 (npm 包路径)
-        const searchPattern = path.join(basePath, `${name}.md`);
-        const candidates = await glob(searchPattern);
+        // 构建搜索模式
+        let searchPatterns = [];
         
-        if (candidates.length > 0) {
-          const agentPath = candidates[0];
-          const content = await fs.readFile(agentPath, 'utf8');
-          const source = this.getSource(agentPath);
-          
-          if (this.verbose) {
-            console.log(`📌 Loading agent "${name}" from: ${agentPath} (${source})`);
+        if (category) {
+          // 指定分类时，只在该分类目录下搜索
+          searchPatterns.push(path.join(basePath, category, `${name}.md`));
+        } else {
+          // 未指定分类时，搜索根目录和所有分类子目录
+          searchPatterns.push(path.join(basePath, `${name}.md`));
+          for (const cat of AGENT_CATEGORIES) {
+            searchPatterns.push(path.join(basePath, cat, `${name}.md`));
           }
+        }
+        
+        // 搜索所有可能的路径
+        for (const pattern of searchPatterns) {
+          const candidates = await glob(pattern);
           
-          return {
-            name,
-            content,
-            path: agentPath,
-            source,
-            metadata: this.parseMetadata(content)
-          };
+          if (candidates.length > 0) {
+            const agentPath = candidates[0];
+            const content = await fs.readFile(agentPath, 'utf8');
+            const source = this.getSource(agentPath);
+            const metadata = this.parseMetadata(content);
+            const detectedCategory = this.detectCategory(agentPath, metadata);
+            
+            if (this.verbose) {
+              console.log(`📌 Loading agent "${name}" from: ${agentPath} (${source}/${detectedCategory})`);
+            }
+            
+            return {
+              name,
+              content,
+              path: agentPath,
+              source,
+              category: detectedCategory,
+              metadata
+            };
+          }
         }
       } catch (error) {
         // 继续尝试下一个路径
@@ -72,9 +102,10 @@ export class AgentLoader {
 
   /**
    * 列出所有可用代理
+   * @param {string} [category] - 可选的分类过滤
    * @returns {Array<object>} - 代理列表，高优先级覆盖低优先级
    */
-  async listAgents() {
+  async listAgents(category = null) {
     const agents = new Map();
     
     // 从低优先级到高优先级遍历，后面的覆盖前面的
@@ -82,29 +113,49 @@ export class AgentLoader {
     
     for (const basePath of reversedPaths) {
       try {
-        const searchPattern = path.join(basePath, '*.md');
-        const files = await glob(searchPattern);
+        // 构建搜索模式 - 包括根目录和所有分类子目录
+        let searchPatterns = [];
         
-        for (const file of files) {
-          const name = path.basename(file, '.md');
-          const source = this.getSource(file);
+        if (category) {
+          // 只搜索指定分类
+          searchPatterns.push(path.join(basePath, category, '*.md'));
+        } else {
+          // 搜索根目录和所有分类子目录
+          searchPatterns.push(path.join(basePath, '*.md'));
+          searchPatterns.push(path.join(basePath, '**', '*.md'));
+        }
+        
+        for (const pattern of searchPatterns) {
+          const files = await glob(pattern);
           
-          // 读取 metadata
-          let metadata = {};
-          try {
-            const content = await fs.readFile(file, 'utf8');
-            metadata = this.parseMetadata(content);
-          } catch (e) {
-            // 忽略读取错误
+          for (const file of files) {
+            const name = path.basename(file, '.md');
+            const source = this.getSource(file);
+            
+            // 读取 metadata
+            let metadata = {};
+            try {
+              const content = await fs.readFile(file, 'utf8');
+              metadata = this.parseMetadata(content);
+            } catch (e) {
+              // 忽略读取错误
+            }
+            
+            const detectedCategory = this.detectCategory(file, metadata);
+            
+            // 如果指定了分类过滤，跳过不匹配的
+            if (category && detectedCategory !== category) {
+              continue;
+            }
+            
+            agents.set(name, {
+              name,
+              path: file,
+              source,
+              description: metadata.description || '',
+              category: detectedCategory
+            });
           }
-          
-          agents.set(name, {
-            name,
-            path: file,
-            source,
-            description: metadata.description || '',
-            category: metadata.category || 'general'
-          });
         }
       } catch (error) {
         // 继续处理其他路径
@@ -115,6 +166,55 @@ export class AgentLoader {
     }
     
     return Array.from(agents.values());
+  }
+
+  /**
+   * 按分类列出所有代理
+   * @returns {object} - { plan: [...], work: [...], review: [...], compound: [...], uncategorized: [...] }
+   */
+  async listAgentsByCategory() {
+    const allAgents = await this.listAgents();
+    const categorized = {
+      plan: [],
+      work: [],
+      review: [],
+      compound: [],
+      uncategorized: []
+    };
+    
+    for (const agent of allAgents) {
+      const category = agent.category;
+      if (AGENT_CATEGORIES.includes(category)) {
+        categorized[category].push(agent);
+      } else {
+        categorized.uncategorized.push(agent);
+      }
+    }
+    
+    return categorized;
+  }
+
+  /**
+   * 检测代理的分类
+   * 优先使用 metadata 中的 category，其次根据文件路径推断
+   * @param {string} filePath - 文件路径
+   * @param {object} metadata - 解析的 metadata
+   * @returns {string} - 分类名称
+   */
+  detectCategory(filePath, metadata = {}) {
+    // 优先使用 metadata 中的 category
+    if (metadata.category && AGENT_CATEGORIES.includes(metadata.category)) {
+      return metadata.category;
+    }
+    
+    // 根据文件路径推断
+    for (const category of AGENT_CATEGORIES) {
+      if (filePath.includes(`/${category}/`) || filePath.includes(`\\${category}\\`)) {
+        return category;
+      }
+    }
+    
+    return 'uncategorized';
   }
 
   /**
@@ -161,6 +261,22 @@ export class AgentLoader {
       package: '📦'
     };
     return icons[source] || '❓';
+  }
+
+  /**
+   * 获取分类的显示图标
+   * @param {string} category - 分类类型
+   * @returns {string} - emoji 图标
+   */
+  static getCategoryIcon(category) {
+    const icons = {
+      plan: '📋',
+      work: '🔨',
+      review: '🔍',
+      compound: '📚',
+      uncategorized: '📄'
+    };
+    return icons[category] || '📄';
   }
 
   /**
