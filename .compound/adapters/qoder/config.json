@@ -1,0 +1,25 @@
+{
+  "version": "1.0.0",
+  "commands": [
+    {
+      "name": "compound",
+      "path": ".compound/adapters/qoder/commands/compound.md",
+      "description": "记录解决方案并建议相关代理"
+    },
+    {
+      "name": "plan",
+      "path": ".compound/adapters/qoder/commands/plan.md",
+      "description": "为前端功能创建详细的实施计划"
+    },
+    {
+      "name": "review",
+      "path": ".compound/adapters/qoder/commands/review.md",
+      "description": "代码审查（可访问性、性能、最佳实践）"
+    },
+    {
+      "name": "work",
+      "path": ".compound/adapters/qoder/commands/work.md",
+      "description": "执行计划，创建组件、编写测试"
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "name": "compound-frontend",
+  "version": "0.1.0",
+  "description": "Frontend workflow automation - Plan, Work, Review, Compound",
+  "author": "Compound Workflow",
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "compound:compound",
+      "description": "记录解决方案并建议相关代理",
+      "argumentHint": "[已解决的问题描述]",
+      "framework": "universal"
+    },
+    {
+      "name": "compound:plan",
+      "description": "为前端功能创建详细的实施计划",
+      "argumentHint": "[功能描述或设计稿链接]",
+      "framework": "universal"
+    },
+    {
+      "name": "compound:review",
+      "description": "代码审查（可访问性、性能、最佳实践）",
+      "argumentHint": "[文件路径或变更描述]",
+      "framework": "universal"
+    },
+    {
+      "name": "compound:work",
+      "description": "执行计划，创建组件、编写测试",
+      "argumentHint": "[计划文件路径或任务描述]",
+      "framework": "universal"
+    }
+  ],
+  "agents": [
+    {
+      "name": "agent-suggester",
+      "description": "根据技术栈和问题类型建议相关代理",
+      "category": "compound"
+    },
+    {
+      "name": "knowledge-recorder",
+      "description": "将解决方案记录到知识库",
+      "category": "compound"
+    },
+    {
+      "name": "tech-stack-detector",
+      "description": "检测项目技术栈并输出结构化信息",
+      "category": "compound"
+    },
+    {
+      "name": "component-architect",
+      "description": "设计组件架构和层级结构",
+      "category": "plan"
+    },
+    {
+      "name": "dependency-advisor",
+      "description": "分析并推荐项目依赖",
+      "category": "plan"
+    },
+    {
+      "name": "requirements-analyzer",
+      "description": "分析需求并提取关键信息用于规划",
+      "category": "plan"
+    },
+    {
+      "name": "accessibility-reviewer",
+      "description": "Review code for accessibility (a11y) compliance",
+      "category": "review"
+    },
+    {
+      "name": "performance-reviewer",
+      "description": "Review code for performance optimization opportunities",
+      "category": "review"
+    },
+    {
+      "name": "security-reviewer",
+      "description": "Review code for frontend security vulnerabilities",
+      "category": "review"
+    },
+    {
+      "name": "code-generator",
+      "description": "根据规划生成组件代码骨架",
+      "category": "work"
+    },
+    {
+      "name": "style-implementer",
+      "description": "实现组件样式和响应式布局",
+      "category": "work"
+    },
+    {
+      "name": "test-writer",
+      "description": "编写单元测试和集成测试",
+      "category": "work"
+    }
+  ]
+}

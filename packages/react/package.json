@@ -14,8 +14,8 @@
     "node": ">=18.0.0"
   },
   "peerDependencies": {
-    "@compound-workflow/core": "^0.1.0",
-    "@compound-workflow/frontend-base": "^0.1.0"
+    "@compound-workflow/core": "workspace:*",
+    "@compound-workflow/frontend-base": "workspace:*"
   },
   "files": [
     "agents/**/*"

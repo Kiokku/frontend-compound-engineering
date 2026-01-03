@@ -9,7 +9,8 @@
   },
   "scripts": {
     "postinstall": "node scripts/install.js",
-    "test": "vitest"
+    "test": "vitest",
+    "test:run": "vitest run"
   },
   "keywords": [
     "workflow",
@@ -27,6 +28,9 @@
     "fs-extra": "^11.0.0",
     "glob": "^10.0.0",
     "yaml": "^2.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^1.0.0"
   },
   "files": [
     ".compound/**/*",

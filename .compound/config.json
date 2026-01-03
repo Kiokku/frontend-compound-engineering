@@ -1,0 +1,23 @@
+{
+  "version": "0.1.0",
+  "tool": "auto",
+  "disabledAgents": [],
+  "preferences": {
+    "autoSuggestAgents": true,
+    "verboseLogging": false,
+    "recordSolutions": true
+  },
+  "adapters": {
+    "claude": {
+      "enabled": true,
+      "pluginDir": "~/.claude/plugins/compound-frontend"
+    },
+    "cursor": {
+      "enabled": true,
+      "useLegacy": false
+    },
+    "qoder": {
+      "enabled": true
+    }
+  }
+}

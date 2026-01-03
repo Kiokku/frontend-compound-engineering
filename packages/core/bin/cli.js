@@ -94,6 +94,53 @@ agentsCmd
   });
 
 // ========================================
+// adapters 子命令组
+// ========================================
+const adaptersCmd = program
+  .command('adapters')
+  .description('Manage tool adapters');
+
+// adapters generate <tool>
+adaptersCmd
+  .command('generate <tool>')
+  .description('Generate adapter for specific tool (claude, cursor, qoder)')
+  .option('--legacy', 'Use legacy format (for Cursor: .cursorrules)')
+  .action(async (tool, options) => {
+    try {
+      const toolLower = tool.toLowerCase();
+
+      if (toolLower === 'claude') {
+        console.log('\n🔧 Generating Claude adapter...\n');
+        const { convertToClaudePlugin } = await import('../scripts/adapters/to-claude.js');
+        await convertToClaudePlugin();
+      } else if (toolLower === 'cursor') {
+        console.log('\n🔧 Generating Cursor adapter...\n');
+        const { convertToCursorRules } = await import('../scripts/adapters/to-cursor.js');
+        await convertToCursorRules({ useLegacy: options.legacy });
+      } else if (toolLower === 'qoder') {
+        console.log('\n🔧 Generating Qoder adapter...\n');
+        const { convertToQoderCommands } = await import('../scripts/adapters/to-qoder.js');
+        await convertToQoderCommands();
+      } else {
+        console.error(`\n❌ Unknown tool: ${tool}`);
+        console.log('💡 Supported tools: claude, cursor, qoder');
+        process.exit(1);
+      }
+    } catch (error) {
+      // Error was already handled by the adapter script with detailed messages
+      // Just exit with error code if not already handled
+      if (!error.handled) {
+        console.error(`\n❌ Failed to generate ${tool} adapter:`, error.message);
+        if (process.env.DEBUG === 'true') {
+          console.error('\nStack trace:');
+          console.error(error.stack);
+        }
+      }
+      process.exit(1);
+    }
+  });
+
+// ========================================
 // init 命令
 // ========================================
 program
@@ -103,7 +150,7 @@ program
   .option('--force', 'Overwrite existing configuration')
   .action(async (options) => {
     console.log('\n🔧 Initializing Compound Workflow...\n');
-    
+
     try {
       // 动态导入 init 脚本
       const initPath = path.resolve(__dirname, '../scripts/init.js');
