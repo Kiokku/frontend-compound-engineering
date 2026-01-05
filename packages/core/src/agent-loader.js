@@ -1,22 +1,27 @@
 /**
- * @fileoverview Agent Loader - 三层优先级代理加载器
+ * @fileoverview Agent Loader - 三层优先级代理加载器（支持嵌套目录结构）
  * 
- * 代理查找优先级:
+ * 代理查找优先级
  * 1. 项目级 (.compound/agents/) - 最高优先级
  * 2. 用户级 (~/.compound/agents/) - 中优先级
- * 3. npm 包级 (node_modules/@compound-workflow/* /agents/) - 最低优先级
+ * 3. npm 包级 (node_modules/@compound-workflow/star/agents/) - 最低优先级
  * 
- * 代理分类:
- * - plan: 规划阶段代理
- * - work: 开发阶段代理
- * - review: 审查阶段代理
- * - compound: 知识固化阶段代理
+ * 代理分类
+ * - plan - 规划阶段代理
+ * - work - 开发阶段代理
+ * - review - 审查阶段代理
+ * - compound - 知识固化阶段代理
+ * 
+ * 支持嵌套目录结构
+ * - 根目录代理 - .compound/agents/custom-agent.md
+ * - 分类代理 - .compound/agents/plan/requirements-analyzer.md
  */
 
 import fs from 'fs-extra';
 import path from 'path';
 import os from 'os';
 import { glob } from 'glob';
+import { AgentLoadError } from './errors.js';
 
 /**
  * 代理加载器类
@@ -42,26 +47,31 @@ export class AgentLoader {
 
   /**
    * 加载指定名称的代理
-   * @param {string} name - 代理名称 (不含 .md 扩展名)
+   * 支持嵌套路径，如 'requirements-analyzer' 或 'plan/requirements-analyzer'
+   * 
+   * @param {string} name - 代理名称 (可以包含路径，不含 .md 扩展名)
    * @param {string} [category] - 可选的分类过滤 (plan/work/review/compound)
-   * @returns {object} - { content: string, path: string, source: string }
-   * @throws {Error} - 如果代理未找到
+   * @returns {object} - { content: string, path: string, source: string, category: string, metadata: object }
+   * @throws {AgentLoadError} - 如果代理未找到
    */
   async loadAgent(name, category = null) {
+    // 规范化名称：移除 .md 后缀
+    const normalizedName = name.replace(/\.md$/, '');
+    
     for (const basePath of this.searchPaths) {
       try {
-        // 构建搜索模式
+        // 支持两种查找方式：
+        // 1. 直接匹配: basePath/name.md 或 basePath/category/name.md
+        // 2. 递归匹配: basePath/**/name.md
         let searchPatterns = [];
         
         if (category) {
           // 指定分类时，只在该分类目录下搜索
-          searchPatterns.push(path.join(basePath, category, `${name}.md`));
+          searchPatterns.push(path.join(basePath, category, `${normalizedName}.md`));
         } else {
-          // 未指定分类时，搜索根目录和所有分类子目录
-          searchPatterns.push(path.join(basePath, `${name}.md`));
-          for (const cat of AGENT_CATEGORIES) {
-            searchPatterns.push(path.join(basePath, cat, `${name}.md`));
-          }
+          // 未指定分类时，使用双模式查找
+          searchPatterns.push(path.join(basePath, `${normalizedName}.md`));        // 根目录直接匹配
+          searchPatterns.push(path.join(basePath, '**', `${normalizedName}.md`)); // 递归匹配
         }
         
         // 搜索所有可能的路径
@@ -76,11 +86,11 @@ export class AgentLoader {
             const detectedCategory = this.detectCategory(agentPath, metadata);
             
             if (this.verbose) {
-              console.log(`📌 Loading agent "${name}" from: ${agentPath} (${source}/${detectedCategory})`);
+              console.log(`📌 Loading agent "${normalizedName}" from: ${agentPath} (${source}/${detectedCategory || 'uncategorized'})`);
             }
             
             return {
-              name,
+              name: normalizedName,
               content,
               path: agentPath,
               source,
@@ -97,13 +107,19 @@ export class AgentLoader {
       }
     }
     
-    throw new Error(`Agent "${name}" not found in any search path`);
+    // 找不到代理，抛出 AgentLoadError
+    throw new AgentLoadError(normalizedName, this.searchPaths, {
+      suggestion: 'Run `compound agents list` to see available agents',
+      category: category || 'any'
+    });
   }
 
   /**
    * 列出所有可用代理
-   * @param {string} [category] - 可选的分类过滤
-   * @returns {Array<object>} - 代理列表，高优先级覆盖低优先级
+   * 递归扫描所有子目录，按优先级覆盖
+   * 
+   * @param {string} [category] - 可选的分类过滤 (plan/work/review/compound)
+   * @returns {Array<object>} - 代理列表，每个包含 { name, path, source, category, relativePath, description, metadata }
    */
   async listAgents(category = null) {
     const agents = new Map();
@@ -113,49 +129,55 @@ export class AgentLoader {
     
     for (const basePath of reversedPaths) {
       try {
-        // 构建搜索模式 - 包括根目录和所有分类子目录
-        let searchPatterns = [];
-        
+        // 递归扫描所有 .md 文件
+        let searchPattern;
         if (category) {
-          // 只搜索指定分类
-          searchPatterns.push(path.join(basePath, category, '*.md'));
+          // 只搜索指定分类目录
+          searchPattern = path.join(basePath, category, '**', '*.md');
         } else {
-          // 搜索根目录和所有分类子目录
-          searchPatterns.push(path.join(basePath, '*.md'));
-          searchPatterns.push(path.join(basePath, '**', '*.md'));
+          // 递归扫描所有子目录
+          searchPattern = path.join(basePath, '**', '*.md');
         }
         
-        for (const pattern of searchPatterns) {
-          const files = await glob(pattern);
+        const files = await glob(searchPattern);
+        
+        for (const file of files) {
+          // 提取代理名称（不包含 .md 后缀）
+          const name = path.basename(file, '.md');
+          const source = this.getSource(file);
           
-          for (const file of files) {
-            const name = path.basename(file, '.md');
-            const source = this.getSource(file);
-            
-            // 读取 metadata
-            let metadata = {};
-            try {
-              const content = await fs.readFile(file, 'utf8');
-              metadata = this.parseMetadata(content);
-            } catch (e) {
-              // 忽略读取错误
-            }
-            
-            const detectedCategory = this.detectCategory(file, metadata);
-            
-            // 如果指定了分类过滤，跳过不匹配的
-            if (category && detectedCategory !== category) {
-              continue;
-            }
-            
-            agents.set(name, {
-              name,
-              path: file,
-              source,
-              description: metadata.description || '',
-              category: detectedCategory
-            });
+          // 读取 metadata
+          let metadata = {};
+          try {
+            const content = await fs.readFile(file, 'utf8');
+            metadata = this.parseMetadata(content);
+          } catch (e) {
+            // 忽略读取错误
           }
+          
+          // 提取分类（如 plan, work, review, compound）
+          const detectedCategory = this.detectCategory(file, metadata);
+          
+          // 如果指定了分类过滤，跳过不匹配的
+          if (category && detectedCategory !== category) {
+            continue;
+          }
+          
+          // 获取相对路径
+          const relativePath = this.getRelativePath(file, basePath);
+          
+          // 使用完整路径作为 key，确保同名但不同目录的代理不被覆盖
+          const uniqueKey = detectedCategory ? `${detectedCategory}/${name}` : name;
+          
+          agents.set(uniqueKey, {
+            name,
+            path: file,
+            source,
+            category: detectedCategory,
+            relativePath,
+            description: metadata.description || '',
+            metadata
+          });
         }
       } catch (error) {
         // 继续处理其他路径
@@ -170,7 +192,16 @@ export class AgentLoader {
 
   /**
    * 按分类列出所有代理
-   * @returns {object} - { plan: [...], work: [...], review: [...], compound: [...], uncategorized: [...] }
+   * 
+   * @returns {Promise<object>} - 按分类分组的代理对象
+   * @example
+   * {
+   *   plan: [{ name: 'requirements-analyzer', ... }],
+   *   work: [{ name: 'code-generator', ... }],
+   *   review: [{ name: 'accessibility-reviewer', ... }],
+   *   compound: [{ name: 'tech-stack-detector', ... }],
+   *   uncategorized: [{ name: 'custom-agent', ... }]
+   * }
    */
   async listAgentsByCategory() {
     const allAgents = await this.listAgents();
@@ -183,7 +214,7 @@ export class AgentLoader {
     };
     
     for (const agent of allAgents) {
-      const category = agent.category;
+      const category = agent.category || 'uncategorized';
       if (AGENT_CATEGORIES.includes(category)) {
         categorized[category].push(agent);
       } else {
@@ -195,11 +226,17 @@ export class AgentLoader {
   }
 
   /**
-   * 检测代理的分类
+   * 提取代理的分类（父目录名）
    * 优先使用 metadata 中的 category，其次根据文件路径推断
+   * 
    * @param {string} filePath - 文件路径
    * @param {object} metadata - 解析的 metadata
-   * @returns {string} - 分类名称
+   * @returns {string|null} - 分类名称，如 'plan', 'work', 'review', 'compound'，根目录代理返回 null
+   * 
+   * @example
+   * detectCategory('plan/requirements-analyzer.md', {}) // → 'plan'
+   * detectCategory('custom-agent.md', {}) // → null
+   * detectCategory('work/code-generator.md', { category: 'work' }) // → 'work'
    */
   detectCategory(filePath, metadata = {}) {
     // 优先使用 metadata 中的 category
@@ -214,17 +251,33 @@ export class AgentLoader {
       }
     }
     
-    return 'uncategorized';
+    // 如果没有明确的分类，返回 null（而非 'uncategorized'）
+    return null;
+  }
+
+  /**
+   * 获取相对于基路径的相对路径
+   * 
+   * @param {string} filePath - 完整文件路径
+   * @param {string} basePath - 基路径（可能包含 glob 通配符）
+   * @returns {string} - 相对路径，如 'plan/requirements-analyzer.md'
+   */
+  getRelativePath(filePath, basePath) {
+    // 移除 glob 通配符
+    const cleanBasePath = basePath.replace(/[*]/g, '');
+    return path.relative(cleanBasePath, filePath);
   }
 
   /**
    * 检查代理是否存在
+   * 
    * @param {string} name - 代理名称
-   * @returns {boolean}
+   * @param {string} [category] - 可选的分类过滤
+   * @returns {Promise<boolean>}
    */
-  async hasAgent(name) {
+  async hasAgent(name, category = null) {
     try {
-      await this.loadAgent(name);
+      await this.loadAgent(name, category);
       return true;
     } catch {
       return false;
@@ -232,7 +285,24 @@ export class AgentLoader {
   }
 
   /**
-   * 根据文件路径判断代理来源
+   * 获取代理的完整路径
+   * 
+   * @param {string} name - 代理名称
+   * @param {string} [category] - 可选的分类过滤
+   * @returns {Promise<string|null>} - 代理文件路径，不存在返回 null
+   */
+  async getAgentPath(name, category = null) {
+    try {
+      const agent = await this.loadAgent(name, category);
+      return agent.path;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 判断代理来源：project, user, package
+   * 
    * @param {string} filePath - 文件路径
    * @returns {string} - 'project' | 'user' | 'package'
    */

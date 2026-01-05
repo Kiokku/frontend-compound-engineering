@@ -182,56 +182,217 @@ done
 ```javascript
 // packages/core/src/agent-loader.js
 
+import path from 'path';
+import os from 'os';
+import fs from 'fs-extra';
+import { glob } from 'glob';
+import { AgentLoadError } from './errors.js';
+
+/**
+ * 代理加载器 - 支持嵌套目录结构
+ * 按优先级从三个位置查找代理：项目 > 用户 > npm 包
+ */
 export class AgentLoader {
   constructor() {
     this.searchPaths = [
-      '.compound/agents/',                    // 1. 项目级(最高优先级)
-      path.join(os.homedir(), '.compound/agents/'),  // 2. 用户级
-      'node_modules/@compound-workflow/*/agents/'    // 3. npm 包级
+      '.compound/agents/',                              // 1. 项目级(最高优先级)
+      path.join(os.homedir(), '.compound/agents/'),    // 2. 用户级
+      'node_modules/@compound-workflow/*/agents/'      // 3. npm 包级
     ];
   }
   
+  /**
+   * 加载指定名称的代理
+   * 支持嵌套路径，如 'requirements-analyzer' 或 'plan/requirements-analyzer'
+   * 
+   * @param {string} name - 代理名称，可以包含路径
+   * @returns {string} - 代理文件内容
+   */
   loadAgent(name) {
+    // 规范化名称：移除 .md 后缀
+    const normalizedName = name.replace(/\.md$/, '');
+    
     for (const basePath of this.searchPaths) {
-      const candidates = glob.sync(path.join(basePath, `${name}.md`));
-      if (candidates.length > 0) {
-        console.log(`📌 Loading agent from: ${candidates[0]}`);
-        return fs.readFileSync(candidates[0], 'utf8');
+      // 支持两种查找方式：
+      // 1. 直接匹配: basePath/name.md
+      // 2. 递归匹配: basePath/**/name.md
+      const patterns = [
+        path.join(basePath, `${normalizedName}.md`),       // 直接匹配
+        path.join(basePath, '**', `${normalizedName}.md`)  // 递归匹配
+      ];
+      
+      for (const pattern of patterns) {
+        const candidates = glob.sync(pattern);
+        if (candidates.length > 0) {
+          const agentPath = candidates[0];
+          console.log(`📌 Loading agent from: ${agentPath}`);
+          return fs.readFileSync(agentPath, 'utf8');
+        }
       }
     }
-    throw new Error(`Agent ${name} not found in any search path`);
+    
+    // 找不到代理，抛出错误
+    throw new AgentLoadError(normalizedName, this.searchPaths, {
+      suggestion: 'Run `compound agents list` to see available agents'
+    });
   }
   
+  /**
+   * 列出所有可用代理
+   * 递归扫描所有子目录，按优先级覆盖
+   * 
+   * @returns {Array} - 代理列表，每个包含 name, path, source, category
+   */
   listAgents() {
     const agents = new Map();
-    // 从低优先级到高优先级,后面的覆盖前面的
+    
+    // 从低优先级到高优先级，后面的覆盖前面的
     for (const basePath of [...this.searchPaths].reverse()) {
-      const files = glob.sync(path.join(basePath, '*.md'));
+      // 递归扫描所有 .md 文件
+      const files = glob.sync(path.join(basePath, '**', '*.md'));
+      
       files.forEach(file => {
+        // 提取代理名称（不包含 .md 后缀）
         const name = path.basename(file, '.md');
-        agents.set(name, {
+        
+        // 提取分类（如 plan, work, review, compound）
+        const category = this.extractCategory(file, basePath);
+        
+        // 使用完整路径作为 key，确保同名但不同目录的代理不被覆盖
+        const relPath = this.getRelativePath(file, basePath);
+        const uniqueKey = category ? `${category}/${name}` : name;
+        
+        agents.set(uniqueKey, {
           name,
           path: file,
-          source: this.getSource(file)
+          source: this.getSource(file),
+          category,
+          relativePath: relPath
         });
       });
     }
+    
     return Array.from(agents.values());
   }
   
+  /**
+   * 提取代理的分类（父目录名）
+   * 例如：plan/requirements-analyzer.md → 'plan'
+   */
+  extractCategory(filePath, basePath) {
+    const relativePath = path.relative(
+      basePath.replace(/[*]/g, ''),  // 移除 glob 通配符
+      filePath
+    );
+    
+    const parts = relativePath.split(path.sep);
+    
+    // 如果有父目录，返回父目录名；否则返回 null
+    return parts.length > 1 ? parts[0] : null;
+  }
+  
+  /**
+   * 获取相对于基路径的相对路径
+   */
+  getRelativePath(filePath, basePath) {
+    const cleanBasePath = basePath.replace(/[*]/g, '');
+    return path.relative(cleanBasePath, filePath);
+  }
+  
+  /**
+   * 判断代理来源：project, user, package
+   */
   getSource(filePath) {
-    if (filePath.includes('.compound/agents')) return 'project';
-    if (filePath.includes(os.homedir())) return 'user';
+    if (filePath.includes('.compound/agents')) {
+      // 区分项目级和用户级
+      if (filePath.includes(os.homedir())) {
+        return 'user';
+      }
+      return 'project';
+    }
     return 'package';
+  }
+  
+  /**
+   * 检查代理是否存在
+   * 
+   * @param {string} name - 代理名称
+   * @returns {boolean}
+   */
+  hasAgent(name) {
+    try {
+      this.loadAgent(name);
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+  
+  /**
+   * 获取代理的完整路径
+   * 
+   * @param {string} name - 代理名称
+   * @returns {string|null} - 代理文件路径，不存在返回 null
+   */
+  getAgentPath(name) {
+    const normalizedName = name.replace(/\.md$/, '');
+    
+    for (const basePath of this.searchPaths) {
+      const patterns = [
+        path.join(basePath, `${normalizedName}.md`),
+        path.join(basePath, '**', `${normalizedName}.md`)
+      ];
+      
+      for (const pattern of patterns) {
+        const candidates = glob.sync(pattern);
+        if (candidates.length > 0) {
+          return candidates[0];
+        }
+      }
+    }
+    
+    return null;
+  }
+  
+  /**
+   * 按分类列出代理
+   * 
+   * @returns {Object} - 按分类分组的代理对象
+   */
+  listAgentsByCategory() {
+    const allAgents = this.listAgents();
+    const byCategory = {
+      plan: [],
+      work: [],
+      review: [],
+      compound: [],
+      uncategorized: []
+    };
+    
+    allAgents.forEach(agent => {
+      const category = agent.category || 'uncategorized';
+      if (byCategory[category]) {
+        byCategory[category].push(agent);
+      } else {
+        byCategory.uncategorized.push(agent);
+      }
+    });
+    
+    return byCategory;
   }
 }
 ```
 
 **验收标准**:
 
+*   [x] 支持嵌套目录结构（plan/requirements-analyzer.md）
 *   [x] 高优先级代理正确覆盖低优先级
-*   [x] 能列出所有可用代理及其来源
-*   [x] 加载时显示代理来源
+*   [x] 能递归列出所有子目录中的代理
+*   [x] 正确提取代理分类（plan/work/review/compound）
+*   [x] 加载时显示代理来源和完整路径
+*   [x] 找不到代理时抛出 AgentLoadError
+*   [x] 支持按分类列出代理
+*   [x] 支持检查代理是否存在
 
 ***
 
@@ -1130,7 +1291,25 @@ npx compound-init --cursor-legacy
 
 ### 3.1 最小核心代理 (Seed)
 
-**核心包只包含 3 个通用代理** (`packages/core/.compound/agents/`):
+**核心包包含 12 个通用代理** (`packages/core/.compound/agents/`)，按工作流分类：
+
+#### Plan 阶段代理 (3个)
+
+| 代理名称                   | 职责           | 包含位置                    |
+| ---------------------- | ------------ | ----------------------- |
+| `requirements-analyzer` | 需求分析与拆解      | @compound-workflow/core |
+| `component-architect`   | 组件架构设计       | @compound-workflow/core |
+| `dependency-advisor`    | 依赖选型与管理建议    | @compound-workflow/core |
+
+#### Work 阶段代理 (3个)
+
+| 代理名称               | 职责        | 包含位置                    |
+| ------------------ | --------- | ----------------------- |
+| `code-generator`    | 代码生成与脚手架  | @compound-workflow/core |
+| `style-implementer` | 样式实现与优化   | @compound-workflow/core |
+| `test-writer`       | 测试用例编写    | @compound-workflow/core |
+
+#### Review 阶段代理 (3个)
 
 | 代理名称                     | 职责     | 包含位置                    |
 | ------------------------ | ------ | ----------------------- |
@@ -1138,19 +1317,53 @@ npx compound-init --cursor-legacy
 | `performance-reviewer`   | 通用性能优化 | @compound-workflow/core |
 | `security-reviewer`      | 前端安全审查 | @compound-workflow/core |
 
-**为什么只有 3 个?**
+#### Compound 阶段代理 (3个)
 
+| 代理名称                  | 职责          | 包含位置                    |
+| --------------------- | ----------- | ----------------------- |
+| `tech-stack-detector` | 技术栈检测与分析    | @compound-workflow/core |
+| `agent-suggester`     | 智能代理推荐      | @compound-workflow/core |
+| `knowledge-recorder`  | 知识记录与结构化存储  | @compound-workflow/core |
+
+**核心代理设计原则**:
+
+*   ✅ 覆盖完整的 Plan → Work → Review → Compound 工作流
 *   ✅ 适用于所有前端项目(框架无关)
-*   ✅ 保持核心包轻量(<5MB)
-*   ✅ 用户按需添加框架特定代理
+*   ✅ 每个工作流阶段 3 个核心代理，职责清晰
+*   ✅ 保持核心包精简(<10MB)
+*   ✅ 用户按需添加框架特定代理(React/Vue/Angular)
 
 ***
 
-### 3.2 框架专用代理库 (Agent Library)
+### 3.2 代理生态架构与管理
 
-**不直接打包,存放在 library/ 目录**:
+本阶段定义框架专用代理的组织、开发、发布和使用的完整流程。
 
-    library/
+#### 3.2.1 三层代理体系
+
+**核心包代理 (Core Agents)**
+- 位置：`packages/core/.compound/agents/`
+- 数量：12 个（4 个工作流 × 3 个代理）
+- 特点：框架无关，适用于所有前端项目
+- 安装：随 `@compound-workflow/core` 自动安装
+
+**框架包代理 (Framework Agents)**
+- 位置：`packages/react/agents/`, `packages/vue/agents/` 等
+- 数量：每个框架 3-5 个专用代理
+- 特点：深度集成框架最佳实践和常见陷阱检查
+- 安装：`npm install @compound-workflow/react`
+
+**工具包代理 (Tool Agents)**
+- 位置：`packages/design-tools/agents/` 等
+- 数量：按工具类别分组
+- 特点：集成外部工具（Figma、Storybook、Bundle Analyzer）
+- 安装：`npm install @compound-workflow/design-tools`
+
+#### 3.2.2 开发时的代理库结构
+
+**在 Monorepo 源码中使用 `library/` 目录作为代理模板库**:
+
+    library/                           # 仅存在于开发环境
     ├── react/
     │   ├── react-reviewer.md          # React 最佳实践
     │   ├── react-hooks-specialist.md  # Hooks 深度审查
@@ -1167,17 +1380,285 @@ npx compound-init --cursor-legacy
         ├── tailwind-reviewer.md
         └── css-modules-reviewer.md
 
-**用户按需安装**:
+**`library/` 目录的作用**:
+- ✅ 作为所有可选代理的**单一数据源**
+- ✅ 便于统一管理和版本控制
+- ✅ 通过脚本同步到对应的 npm 包
+- ❌ **不会**随 npm 包发布到用户项目
+
+#### 3.2.3 代理同步与构建流程
+
+**同步脚本**: `scripts/sync-agents.js`
+
+```javascript
+#!/usr/bin/env node
+
+import fs from 'fs-extra';
+import path from 'path';
+import { glob } from 'glob';
+
+/**
+ * 将 library/ 中的代理模板同步到对应的 npm 包
+ */
+async function syncAgents() {
+  console.log('📦 同步代理文件到 npm 包...\n');
+  
+  const frameworks = [
+    { name: 'react', package: 'packages/react/agents' },
+    { name: 'vue', package: 'packages/vue/agents' },
+    { name: 'angular', package: 'packages/angular/agents' },
+    { name: 'svelte', package: 'packages/svelte/agents' }
+  ];
+  
+  for (const framework of frameworks) {
+    const source = `library/${framework.name}`;
+    const target = framework.package;
+    
+    if (!await fs.pathExists(source)) {
+      console.log(`⏭️  跳过 ${framework.name} (源目录不存在)`);
+      continue;
+    }
+    
+    // 清空目标目录
+    await fs.emptyDir(target);
+    
+    // 复制所有代理文件
+    await fs.copy(source, target, {
+      filter: (src) => src.endsWith('.md')
+    });
+    
+    const files = await fs.readdir(target);
+    console.log(`✅ ${framework.name}: 同步了 ${files.length} 个代理`);
+  }
+  
+  console.log('\n🎉 代理同步完成!');
+}
+
+syncAgents().catch(console.error);
+```
+
+**集成到 package.json**:
+
+```json
+{
+  "scripts": {
+    "sync:agents": "node scripts/sync-agents.js",
+    "validate:agents": "node scripts/validate-agents.js",
+    "prebuild": "pnpm run sync:agents && pnpm run validate:agents"
+  }
+}
+```
+
+**验证脚本**: `scripts/validate-agents.js`
+
+```javascript
+#!/usr/bin/env node
+
+import fs from 'fs-extra';
+import yaml from 'yaml';
+import { glob } from 'glob';
+
+/**
+ * 验证所有代理文件的格式和必需字段
+ */
+async function validateAgents() {
+  console.log('🔍 验证代理文件格式...\n');
+  
+  const agentFiles = glob.sync('packages/*/agents/**/*.md');
+  let errorCount = 0;
+  
+  for (const file of agentFiles) {
+    const content = await fs.readFile(file, 'utf8');
+    const frontmatterMatch = content.match(/^---\n([\s\S]+?)\n---/);
+    
+    if (!frontmatterMatch) {
+      console.error(`❌ ${file}: 缺少 YAML frontmatter`);
+      errorCount++;
+      continue;
+    }
+    
+    try {
+      const frontmatter = yaml.parse(frontmatterMatch[1]);
+      const required = ['name', 'description', 'category', 'frameworks'];
+      
+      for (const field of required) {
+        if (!frontmatter[field]) {
+          console.error(`❌ ${file}: 缺少必需字段 '${field}'`);
+          errorCount++;
+        }
+      }
+      
+      if (errorCount === 0) {
+        console.log(`✅ ${file}`);
+      }
+    } catch (error) {
+      console.error(`❌ ${file}: YAML 解析错误 - ${error.message}`);
+      errorCount++;
+    }
+  }
+  
+  if (errorCount > 0) {
+    console.error(`\n❌ 发现 ${errorCount} 个错误`);
+    process.exit(1);
+  } else {
+    console.log('\n✅ 所有代理文件验证通过');
+  }
+}
+
+validateAgents().catch(console.error);
+```
+
+#### 3.2.4 用户安装代理的三种方式
+
+**方式1: 轻量级使用（适合学习和尝试）**
 
 ```bash
-# 方式1: 从库中复制
-compound agents add react-reviewer
-# → 复制 library/react/react-reviewer.md 到 .compound/agents/
+# 只安装核心包
+npm install @compound-workflow/core
 
-# 方式2: 安装 npm 包
-npm install @compound-workflow/react
-# → 自动注册 react 相关代理
+# 按需添加单个代理（从 npm 包中复制）
+compound agents add react-reviewer
+# → 检测到已安装 @compound-workflow/react
+# → 从 node_modules/@compound-workflow/react/agents/ 复制到 .compound/agents/
+
+# 如果未安装对应包，提示安装
+compound agents add vue-reviewer
+# ⚠️  未找到 vue-reviewer
+# 💡 提示: 运行 'npm install @compound-workflow/vue' 后重试
 ```
+
+**优点**:
+- 核心包体积小
+- 只安装需要的代理
+- 可以自由选择
+
+**缺点**:
+- 需要先安装对应的框架包
+- 代理版本依赖 npm 包版本
+
+---
+
+**方式2: 框架包安装（推荐生产环境）**
+
+```bash
+# 安装框架专用包（包含所有 React 代理）
+npm install @compound-workflow/react
+
+# 代理自动可用（无需手动复制）
+compound agents list
+# 输出:
+# 📦 Installed Agents:
+# 📦 react-reviewer (package: @compound-workflow/react)
+# 📦 react-hooks-specialist (package: @compound-workflow/react)
+# 📦 react-performance (package: @compound-workflow/react)
+```
+
+**优点**:
+- 版本锁定，稳定可靠
+- 离线可用
+- 所有代理一次性可用
+- 无需手动管理文件
+
+**缺点**:
+- 包体积稍大（约 2-3MB per 框架）
+- 无法选择性安装单个代理
+
+---
+
+**方式3: 自定义代理（适合团队定制）**
+
+```bash
+# 复制 npm 包中的代理到项目，进行自定义修改
+cp node_modules/@compound-workflow/react/agents/react-reviewer.md \
+   .compound/agents/react-reviewer.md
+
+# 编辑自定义规则
+vim .compound/agents/react-reviewer.md
+
+# 项目级代理优先级最高，会覆盖 npm 包中的同名代理
+compound agents list
+# 输出:
+# 📌 react-reviewer (project) ← 自定义版本
+# 📦 react-hooks-specialist (package)
+# 📦 react-performance (package)
+```
+
+**优点**:
+- 完全自定义
+- 项目级优先级最高
+- 可以添加团队特定规则
+
+**使用场景**:
+- 团队有特殊代码规范
+- 需要深度定制检查规则
+- 集成内部工具链
+
+#### 3.2.5 代理包发布流程
+
+**发布前检查清单**:
+
+```bash
+# 1. 同步代理文件
+pnpm run sync:agents
+
+# 2. 验证代理格式
+pnpm run validate:agents
+
+# 3. 运行测试
+pnpm test
+
+# 4. 构建包
+pnpm run build
+
+# 5. 发布
+cd packages/react && npm publish --access public
+```
+
+**CI/CD 集成**:
+
+```yaml
+# .github/workflows/publish.yml
+name: Publish Packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: pnpm/action-setup@v2
+      
+      - name: Sync Agents
+        run: pnpm run sync:agents
+      
+      - name: Validate Agents
+        run: pnpm run validate:agents
+      
+      - name: Build
+        run: pnpm run build
+      
+      - name: Publish to npm
+        run: pnpm publish -r --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+```
+
+**验收标准**:
+
+*   [x] `library/` 目录结构清晰，覆盖主流框架（React、Vue、Angular、Svelte）
+*   [x] 每个框架至少包含 3 个专用代理
+*   [x] 实现 `library/` 到 `packages/*/agents/` 的自动化同步脚本
+*   [x] 实现代理文件格式验证脚本
+*   [x] 所有代理文件包含完整的 YAML frontmatter（name, description, category, frameworks）
+*   [x] 用户可通过三种方式安装和使用代理
+*   [x] npm 包安装后，代理自动可用（通过代理优先级查找）
+*   [x] 框架代理包大小控制在 3MB 以内
+*   [x] 发布前自动执行同步和验证流程
+*   [x] CI/CD 集成自动化发布
 
 ***
 
@@ -1229,10 +1710,13 @@ You are a React expert reviewer focusing on modern best practices.
 
 **验收标准**:
 
-*   [x] 核心包只包含 3 个通用代理
-*   [x] 框架代理分离到独立包
-*   [x] 代理库包含至少 10 个可选代理
-*   [x] 每个代理有清晰的职责和检查清单
+*   [x] 每个框架包至少包含 3 个专用代理
+*   [x] 所有框架代理包含完整的 YAML frontmatter
+*   [x] 每个代理有清晰的检查清单（至少 5 条）
+*   [x] 代理内容包含 Common Pitfalls 部分
+*   [x] 代理文件大小控制在 5KB 以内
+*   [x] 框架包可以独立发布和版本管理
+*   [x] 框架包 peerDependencies 正确依赖 core 包
 
 ***
 
@@ -1271,9 +1755,22 @@ packages/core/
 │   │   ├── review.md
 │   │   └── compound.md
 │   └── agents/              ──────────→  .compound/agents/ (npm 包级)
-│       ├── accessibility.md
-│       ├── performance.md
-│       └── security.md
+│       ├── plan/
+│       │   ├── requirements-analyzer.md
+│       │   ├── component-architect.md
+│       │   └── dependency-advisor.md
+│       ├── work/
+│       │   ├── code-generator.md
+│       │   ├── style-implementer.md
+│       │   └── test-writer.md
+│       ├── review/
+│       │   ├── accessibility-reviewer.md
+│       │   ├── performance-reviewer.md
+│       │   └── security-reviewer.md
+│       └── compound/
+│           ├── tech-stack-detector.md
+│           ├── agent-suggester.md
+│           └── knowledge-recorder.md
 ├── scripts/
 │   ├── install.js           # postinstall 钩子
 │   ├── init.js              # npx compound-init
@@ -1571,51 +2068,188 @@ program.parse();
 import { AgentLoader } from './agent-loader.js';
 import fs from 'fs-extra';
 import path from 'path';
+import os from 'os';
+import { glob } from 'glob';
 
+/**
+ * 代理管理器 - 负责安装、移除、列出代理
+ * 根据 Phase 3.2 架构，从 node_modules 中查找可用代理
+ */
 export class AgentManager {
   constructor() {
     this.loader = new AgentLoader();
-    this.libraryPath = path.join(__dirname, '../../library');
+    // 查找所有 @compound-workflow/* 包中的 agents 目录
+    this.packageAgentsPath = 'node_modules/@compound-workflow/*/agents';
   }
   
-  // 列出所有代理
+  /**
+   * 列出所有已安装的代理和可安装的代理
+   */
   async list() {
-    const agents = this.loader.listAgents();
+    // 1. 获取已激活的代理（通过 AgentLoader 的优先级查找）
+    const activeAgents = this.loader.listAgents();
     
-    console.log('\n📦 Installed Agents:\n');
-    agents.forEach(agent => {
-      const icon = {
-        project: '📌',
-        user: '👤',
-        package: '📦'
-      }[agent.source];
-      console.log(`${icon} ${agent.name} (${agent.source})`);
+    console.log('\n📦 Active Agents:\n');
+    
+    // 按来源分组显示
+    const bySource = {
+      project: [],
+      user: [],
+      package: []
+    };
+    
+    activeAgents.forEach(agent => {
+      bySource[agent.source].push(agent);
     });
     
-    // 显示可安装的代理
-    const available = await this.getAvailableAgents();
-    const installed = new Set(agents.map(a => a.name));
-    const notInstalled = available.filter(a => !installed.has(a));
-    
-    if (notInstalled.length > 0) {
-      console.log('\n💡 Available to Install:\n');
-      notInstalled.forEach(name => {
-        console.log(`   - ${name}`);
+    // 显示项目级代理
+    if (bySource.project.length > 0) {
+      console.log('📌 Project Level (.compound/agents/):\n');
+      bySource.project.forEach(agent => {
+        console.log(`   ${agent.name}`);
       });
-      console.log('\nInstall with: compound agents add <name>');
+      console.log();
+    }
+    
+    // 显示用户级代理
+    if (bySource.user.length > 0) {
+      console.log('👤 User Level (~/.compound/agents/):\n');
+      bySource.user.forEach(agent => {
+        console.log(`   ${agent.name}`);
+      });
+      console.log();
+    }
+    
+    // 显示包级代理
+    if (bySource.package.length > 0) {
+      console.log('📦 Package Level (node_modules/):\n');
+      bySource.package.forEach(agent => {
+        const pkgName = this.extractPackageName(agent.path);
+        console.log(`   ${agent.name} (${pkgName})`);
+      });
+      console.log();
+    }
+    
+    // 2. 显示可用但未激活的代理
+    await this.showAvailableAgents(activeAgents);
+  }
+  
+  /**
+   * 显示可安装的代理
+   */
+  async showAvailableAgents(activeAgents) {
+    const activeNames = new Set(activeAgents.map(a => a.name));
+    const availableAgents = await this.scanPackageAgents();
+    
+    const notActive = availableAgents.filter(agent => !activeNames.has(agent.name));
+    
+    if (notActive.length > 0) {
+      console.log('💡 Available to Install (from installed packages):\n');
+      notActive.forEach(agent => {
+        console.log(`   - ${agent.name} (${agent.package})`);
+      });
+      console.log('\n📝 Install with: compound agents add <name>');
+      console.log('   Add --global to install to ~/.compound/agents/\n');
+    }
+    
+    // 3. 检测常见框架包是否安装
+    await this.suggestPackages();
+  }
+  
+  /**
+   * 扫描 node_modules 中的所有代理
+   */
+  async scanPackageAgents() {
+    const agents = [];
+    const agentFiles = glob.sync(this.packageAgentsPath + '/**/*.md');
+    
+    for (const file of agentFiles) {
+      const name = path.basename(file, '.md');
+      const pkgName = this.extractPackageName(file);
+      agents.push({ name, path: file, package: pkgName });
+    }
+    
+    return agents;
+  }
+  
+  /**
+   * 从文件路径提取包名
+   */
+  extractPackageName(filePath) {
+    const match = filePath.match(/node_modules\/@compound-workflow\/(\w+)/);
+    return match ? `@compound-workflow/${match[1]}` : 'unknown';
+  }
+  
+  /**
+   * 建议安装常见框架包
+   */
+  async suggestPackages() {
+    const commonPackages = [
+      { name: '@compound-workflow/react', check: 'react' },
+      { name: '@compound-workflow/vue', check: 'vue' },
+      { name: '@compound-workflow/angular', check: '@angular/core' }
+    ];
+    
+    const suggestions = [];
+    
+    for (const pkg of commonPackages) {
+      // 检查项目是否使用该框架
+      const hasFramework = await this.hasPackageInProject(pkg.check);
+      // 检查是否已安装对应的 compound 包
+      const hasCompoundPkg = await this.hasPackageInProject(pkg.name);
+      
+      if (hasFramework && !hasCompoundPkg) {
+        suggestions.push(pkg.name);
+      }
+    }
+    
+    if (suggestions.length > 0) {
+      console.log('\n💡 Suggested Packages (based on your project):\n');
+      suggestions.forEach(pkg => {
+        console.log(`   npm install ${pkg}`);
+      });
+      console.log();
     }
   }
   
-  // 添加代理
+  /**
+   * 检查项目中是否安装了某个包
+   */
+  async hasPackageInProject(packageName) {
+    const pkgJsonPath = path.join(process.cwd(), 'package.json');
+    
+    if (!await fs.pathExists(pkgJsonPath)) {
+      return false;
+    }
+    
+    const pkgJson = await fs.readJson(pkgJsonPath);
+    const deps = {
+      ...pkgJson.dependencies,
+      ...pkgJson.devDependencies
+    };
+    
+    return !!deps[packageName];
+  }
+  
+  /**
+   * 添加代理到项目或用户目录
+   */
   async add(name, options = {}) {
     const { global = false } = options;
     
-    // 1. 检查库中是否存在
-    const libraryPath = path.join(this.libraryPath, '**', `${name}.md`);
-    const files = glob.sync(libraryPath);
+    // 1. 在 node_modules 中查找代理
+    const availableAgents = await this.scanPackageAgents();
+    const agent = availableAgents.find(a => a.name === name);
     
-    if (files.length === 0) {
-      throw new Error(`Agent ${name} not found in library`);
+    if (!agent) {
+      // 代理不存在，提供帮助信息
+      console.error(`❌ Agent '${name}' not found in installed packages.\n`);
+      console.log('💡 Suggestions:\n');
+      console.log('   1. Check available agents: compound agents list');
+      console.log('   2. Install a framework package first:');
+      console.log('      npm install @compound-workflow/react');
+      console.log('      npm install @compound-workflow/vue\n');
+      return;
     }
     
     // 2. 确定安装位置
@@ -1623,35 +2257,77 @@ export class AgentManager {
       ? path.join(os.homedir(), '.compound/agents')
       : '.compound/agents';
     
-    // 3. 复制文件
-    await fs.ensureDir(targetDir);
-    await fs.copy(files[0], path.join(targetDir, `${name}.md`));
+    // 3. 处理嵌套目录结构（如 plan/requirements-analyzer.md）
+    const relativePath = path.relative(
+      path.join(path.dirname(agent.path), '..'),
+      agent.path
+    );
+    const targetPath = path.join(targetDir, relativePath);
     
-    console.log(`✅ Installed ${name} to ${targetDir}`);
+    // 4. 复制文件
+    await fs.ensureDir(path.dirname(targetPath));
+    await fs.copy(agent.path, targetPath);
+    
+    const location = global ? '~/.compound/agents/' : '.compound/agents/';
+    console.log(`✅ Installed ${name} to ${location}`);
+    console.log(`📦 Source: ${agent.package}\n`);
   }
   
-  // 移除代理
+  /**
+   * 移除代理
+   */
   async remove(name) {
     const agents = this.loader.listAgents();
     const agent = agents.find(a => a.name === name);
     
     if (!agent) {
-      throw new Error(`Agent ${name} not found`);
+      console.error(`❌ Agent '${name}' not found`);
+      return;
     }
     
     if (agent.source === 'package') {
-      console.log('⚠️  Cannot remove package agents. Uninstall the npm package instead.');
+      console.log('⚠️  Cannot remove package agents.');
+      console.log('💡 Package agents are read-only from node_modules/');
+      console.log('   To disable, uninstall the npm package:\n');
+      const pkgName = this.extractPackageName(agent.path);
+      console.log(`   npm uninstall ${pkgName}\n`);
       return;
     }
     
     await fs.remove(agent.path);
-    console.log(`🗑️  Removed ${name}`);
+    const location = agent.source === 'user' ? 'user' : 'project';
+    console.log(`🗑️  Removed ${name} from ${location} level\n`);
   }
   
-  // 获取可用代理列表
-  async getAvailableAgents() {
-    const files = glob.sync(path.join(this.libraryPath, '**', '*.md'));
-    return files.map(f => path.basename(f, '.md'));
+  /**
+   * 更新代理（从 package 重新复制）
+   */
+  async update(name) {
+    const agents = this.loader.listAgents();
+    const agent = agents.find(a => a.name === name);
+    
+    if (!agent) {
+      console.error(`❌ Agent '${name}' not found`);
+      return;
+    }
+    
+    if (agent.source === 'package') {
+      console.log('⚠️  Package agents are always up-to-date.');
+      console.log('💡 Update the npm package to get the latest version:\n');
+      const pkgName = this.extractPackageName(agent.path);
+      console.log(`   npm update ${pkgName}\n`);
+      return;
+    }
+    
+    // 从 package 重新复制
+    console.log(`🔄 Updating ${name} from package...\n`);
+    
+    // 先移除
+    await fs.remove(agent.path);
+    
+    // 重新添加
+    const isGlobal = agent.source === 'user';
+    await this.add(name, { global: isGlobal });
   }
 }
 ```
@@ -1662,36 +2338,80 @@ export class AgentManager {
 # 列出所有代理
 compound agents list
 # 输出:
-# 📦 Installed Agents:
-# 📌 accessibility-reviewer (project)
-# 👤 custom-reviewer (user)
-# 📦 performance-reviewer (package)
+# 📦 Active Agents:
 #
-# 💡 Available to Install:
-#    - react-reviewer
-#    - vue-reviewer
-#    - bundle-analyzer
+# 📌 Project Level (.compound/agents/):
+#    custom-react-reviewer
+#
+# 👤 User Level (~/.compound/agents/):
+#    my-custom-agent
+#
+# 📦 Package Level (node_modules/):
+#    react-reviewer (@compound-workflow/react)
+#    react-hooks-specialist (@compound-workflow/react)
+#    vue-reviewer (@compound-workflow/vue)
+#
+# 💡 Available to Install (from installed packages):
+#    - react-performance (@compound-workflow/react)
+#    - vue-composition-api (@compound-workflow/vue)
+#
+# 📝 Install with: compound agents add <name>
+#    Add --global to install to ~/.compound/agents/
+#
+# 💡 Suggested Packages (based on your project):
+#    npm install @compound-workflow/react
 
-# 添加代理到项目
+# 添加代理到项目（从已安装的 npm 包复制）
 compound agents add react-reviewer
+# 输出:
+# ✅ Installed react-reviewer to .compound/agents/
+# 📦 Source: @compound-workflow/react
 
 # 添加代理到用户全局
 compound agents add react-reviewer --global
+# ✅ Installed react-reviewer to ~/.compound/agents/
+# 📦 Source: @compound-workflow/react
+
+# 如果代理不存在
+compound agents add vue-reviewer
+# ❌ Agent 'vue-reviewer' not found in installed packages.
+#
+# 💡 Suggestions:
+#    1. Check available agents: compound agents list
+#    2. Install a framework package first:
+#       npm install @compound-workflow/react
+#       npm install @compound-workflow/vue
 
 # 移除代理
 compound agents remove react-reviewer
+# 🗑️  Removed react-reviewer from project level
+
+# 尝试移除 package 代理
+compound agents remove accessibility-reviewer
+# ⚠️  Cannot remove package agents.
+# 💡 Package agents are read-only from node_modules/
+#    To disable, uninstall the npm package:
+#    npm uninstall @compound-workflow/core
 
 # 更新代理
 compound agents update react-reviewer
+# 🔄 Updating react-reviewer from package...
+# ✅ Installed react-reviewer to .compound/agents/
+# 📦 Source: @compound-workflow/react
 ```
 
 **验收标准**:
 
-*   [x] `compound agents list` 显示所有代理及来源
-*   [x] `compound agents add` 从库中安装代理
+*   [x] `compound agents list` 按来源分组显示所有代理
+*   [x] 显示 package 代理时包含所属的 npm 包名
+*   [x] `compound agents add` 从 node_modules 复制代理到项目
+*   [x] 代理不存在时提供有帮助的错误信息
 *   [x] 支持 `--global` 安装到用户目录
-*   [x] `compound agents remove` 移除项目/用户代理
-*   [x] 清晰提示可安装的代理
+*   [x] `compound agents remove` 移除项目/用户代理，但不能移除 package 代理
+*   [x] `compound agents update` 从 package 重新复制最新版本
+*   [x] 根据项目 package.json 智能推荐框架包
+*   [x] 支持嵌套目录结构（如 plan/requirements-analyzer.md）
+*   [x] 清晰提示可安装的代理及其来源
 
 ***
 

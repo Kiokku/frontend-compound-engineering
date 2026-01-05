@@ -2,11 +2,15 @@
   "name": "@compound-workflow/root",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "Frontend development workflow toolkit - Monorepo root",
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "lint": "pnpm -r lint"
+    "lint": "pnpm -r lint",
+    "sync:agents": "node scripts/sync-agents.js",
+    "validate:agents": "node scripts/validate-agents.js",
+    "prebuild": "pnpm run sync:agents && pnpm run validate:agents"
   },
   "keywords": [
     "workflow",
@@ -22,5 +26,10 @@
   "engines": {
     "node": ">=18.0.0",
     "pnpm": ">=8.0.0"
+  },
+  "devDependencies": {
+    "fs-extra": "^11.0.0",
+    "glob": "^10.0.0",
+    "yaml": "^2.0.0"
   }
 }
