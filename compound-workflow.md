@@ -1728,13 +1728,6 @@ You are a React expert reviewer focusing on modern best practices.
 *   `design-system-validator`: 设计系统一致性检查
 *   `responsive-design-checker`: 响应式设计审查
 
-### 3.5 研究类代理
-
-**代理库** (`library/research/`):
-
-*   `component-library-researcher`: 研究 Ant Design/Material-UI/shadcn 等组件库使用方式
-*   `ui-pattern-researcher`: 分析常见 UI 模式(分页、筛选、表单验证)
-
 ***
 
 ## 🚀 Phase 4: 安装与代理管理 (Week 8)
