@@ -8,275 +8,184 @@ version: 1.0.0
 
 # Svelte Code Reviewer
 
-## Your Role
-You are a Svelte expert reviewer focused on Svelte 5 (Runes) and SvelteKit best practices.
-
-## Review Checklist
+## Checklist
 
 ### Component Design
 - [ ] Single Responsibility Principle
-- [ ] Props properly typed with TypeScript
-- [ ] Events dispatched with createEventDispatcher
-- [ ] Slots used for component composition
-- [ ] Stores used for shared state (when needed)
+- [ ] Props typed with TypeScript
+- [ ] Events with createEventDispatcher
+- [ ] Slots for composition
+- [ ] Stores for shared state
 
 ### Reactivity (Svelte 5 Runes)
-- [ ] Using modern runes: $state, $derived, $effect
+- [ ] Using runes: $state, $derived, $effect
 - [ ] $state for local reactive state
-- [ ] $derived for computed values (preferred over $state)
-- [ ] $effect for side effects (not for derived state)
-- [ ] Understanding fine-grained reactivity
+- [ ] $derived for computed (preferred)
+- [ ] $effect for side effects only
+- [ ] Fine-grained reactivity understood
 
 ### SvelteKit Patterns
-- [ ] Load functions used for data fetching
-- [ ] Server vs client code properly separated
-- [ ] Form actions used for mutations
-- [ ] Page navigation uses goto or <a>
-- [ ] Error handling with +error.svelte pages
+- [ ] Load functions for data fetching
+- [ ] Server vs client code separated
+- [ ] Form actions for mutations
+- [ ] Error handling with +error.svelte
 
 ### Performance
-- [ ] Large lists use virtualization (svelte-virtual-list)
-- [ ] Images optimized with `<Image>` component (SvelteKit)
-- [ ] Components lazy-loaded where appropriate
-- [ ] $effect.deps used for expensive computations
-- [ ] No unnecessary reactivity (use static variables)
+- [ ] Virtual lists for long lists
+- [ ] Images optimized
+- [ ] Lazy-loaded components
+- [ ] No unnecessary reactivity
 
-### Common Pitfalls
-- [ ] No direct DOM manipulation (use actions)
-- [ ] Avoid mutating props directly
-- [ ] $effect.cleanup used for cleanup
-- [ ] No infinite loops in $effect
-- [ ] Understanding when to use stores vs runes
-
-## Svelte 5 Runes Patterns
+## Svelte 5 Runes
 
 ### State vs Derived
 ```svelte
-<!-- ✅ Good: Using runes -->
 <script lang="ts">
 let count = $state(0);
 let doubled = $derived(count * 2); // Computed, cached
 
 function increment() {
-  count++; // Triggers reactivity
+  count++;
 }
 </script>
 
-<p>Count: {count}</p>
-<p>Doubled: {doubled}</p>
-
-<!-- ❌ Bad: Using $state for derived values -->
-<script lang="ts">
-let count = $state(0);
-let doubled = $state(count * 2); // Should be $derived!
-</script>
+<p>{count} / {doubled}</p>
 ```
 
-### Effects for Side Effects
+### Effects
 ```svelte
 <script lang="ts">
 let count = $state(0);
 
-// ✅ Good: $effect for side effects
+// ✅ Side effect with cleanup
 $effect(() => {
-  document.title = `Count: ${count}`;
+  const timer = setInterval(() => console.log('tick'), 1000);
+  return () => clearInterval(timer);
 });
 
-// ✅ Good: with cleanup
-$effect(() => {
-  const timer = setInterval(() => {
-    console.log('Tick');
-  }, 1000);
-
-  return () => clearInterval(timer); // Cleanup
-});
-
-// ❌ Bad: Using $effect for derived state
-$effect(() => {
-  doubled = count * 2; // Use $derived instead!
-});
+// ❌ Don't use $effect for derived state
+// $effect(() => { doubled = count * 2; }); // WRONG
+// ✅ Use $derived instead
+let doubled = $derived(count * 2);
 </script>
 ```
 
-### Props and Events
+### Props & Events
 ```svelte
-<!-- ChildComponent.svelte -->
 <script lang="ts">
-// Props with TypeScript
 interface Props {
   name: string;
   count?: number;
 }
 let { name, count = 0 }: Props = $props();
 
-// Events
 interface Events {
   click: MouseEvent;
-  change: { value: string };
 }
 const emit = createEventDispatcher<Events>();
-
-function handleClick(e: MouseEvent) {
-  emit('click', e);
-}
 </script>
 
-<button on:click>{name}: {count}</button>
+<button on:click={(e) => emit('click', e)}>{name}: {count}</button>
 ```
 
-## SvelteKit Best Practices
+## SvelteKit Patterns
 
 ### Load Functions
 ```typescript
-// ✅ Good: Server load for data
+// ✅ Server load for data
 export async function load({ fetch }) {
   const res = await fetch('/api/posts');
   const posts = await res.json();
-
   return { posts };
 }
 
-// ✅ Good: Universal load (server + client)
+// ✅ Universal (server + client)
 export async function load({ url, fetch }) {
   const query = url.searchParams.get('q');
   const res = await fetch(`/api/search?q=${query}`);
-  const results = await res.json();
-
-  return { results };
+  return { results: await res.json() };
 }
 ```
 
 ### Form Actions
 ```svelte
-<!-- +page.svelte -->
 <script lang="ts">
 import { enhance } from '$app/forms';
-
-let { form, data } = $props();
+let { form } = $props();
 </script>
 
 <form method="POST" use:enhance>
   <input type="email" name="email" required />
-  <button type="submit">Subscribe</button>
+  <button>Submit</button>
 </form>
 
-{#if form?.success}
-  <p>Subscribed!</p>
-{/if}
-
-{#if form?.error}
-  <p>{form.error}</p>
-{/if}
+{#if form?.success}<p>Success!</p>{/if}
+{#if form?.error}<p>{form.error}</p>{/if}
 ```
 
 ```typescript
 // +page.server.ts
-import type { Actions } from './$types';
-
-export const actions: Actions = {
+export const actions = {
   default: async ({ request }) => {
     const data = await request.formData();
     const email = data.get('email');
-
-    // Validate
-    if (!email || !email.includes('@')) {
-      return { error: 'Invalid email' };
-    }
-
-    // Process...
+    if (!email?.includes('@')) return { error: 'Invalid email' };
     return { success: true };
   }
 };
 ```
 
-## Common Anti-patterns
+## Anti-patterns
 
-### ❌ Don't: Mutate props
+### ❌ Don't Mutate Props
 ```svelte
 <script>
 export let prop = { value: 0 };
 prop.value = 10; // ❌ Don't mutate props!
+
+// ✅ Create local state
+let localValue = $state(prop.value);
+localValue = 10; // OK
 </script>
 ```
 
-### ✅ Do: Create local state
+### ❌ Unnecessary Reactivity
 ```svelte
 <script>
-export let prop = { value: 0 };
-let localValue = $state(prop.value); // ✅ Local state
-localValue = 10; // OK to modify
+// ❌ Never changes - doesn't need reactivity
+const title = $state("My App");
+
+// ✅ Static constant
+const title = "My App";
+
+// ✅ Reactive state
+let count = $state(0);
 </script>
 ```
 
-### ❌ Don't: Unnecessary reactivity
-```svelte
-<script>
-// This never changes - doesn't need to be reactive
-const title = $state("My App"); // ❌ Overkill
-</script>
-```
-
-### ✅ Do: Use static for constants
-```svelte
-<script>
-// Static constant
-const title = "My App"; // ✅ Better
-
-// Reactive state
-let count = $state(0); // ✅ Correct usage
-</script>
-```
-
-### ❌ Don't: Infinite $effect loops
+### ❌ Infinite $effect Loop
 ```svelte
 <script>
 let count = $state(0);
 
 // ❌ Infinite loop!
-$effect(() => {
-  count++; // Triggers $effect again
-});
+$effect(() => { count++; });
+
+// ✅ Log without mutation
+$effect(() => { console.log(count); });
 </script>
 ```
 
-### ✅ Do: Explicit dependencies
-```svelte
-<script>
-let count = $state(0);
-let log = $state([]);
-
-// ✅ No infinite loop - explicit trigger
-$effect(() => {
-  console.log('Count changed:', count);
-});
-</script>
-```
-
-## Performance Tips
-
-1. **Use $derived for computed values** (cached, lazy)
-2. **Avoid $effect when $derived works** (more efficient)
-3. **Virtualize long lists** (svelte-virtual-list)
-4. **Lazy load components** (dynamic imports)
-5. **Optimize images** (SvelteKit Image component)
-
-## Store Patterns
-
+## Store Pattern
 ```typescript
-// stores.ts
 import { writable } from 'svelte/store';
 
-export const count = writable(0);
-
-// Custom store with methods
 function createCount() {
-  const { subscribe, set, update } = writable(0);
-
+  const { subscribe, update } = writable(0);
   return {
     subscribe,
     increment: () => update(n => n + 1),
-    decrement: () => update(n => n - 1),
-    reset: () => set(0)
+    decrement: () => update(n => n - 1)
   };
 }
 
@@ -284,7 +193,6 @@ export const countStore = createCount();
 ```
 
 ```svelte
-<!-- Usage -->
 <script>
 import { countStore } from './stores';
 </script>
@@ -294,7 +202,16 @@ import { countStore } from './stores';
 </button>
 ```
 
+## Best Practices
+
+1. Use $derived for computed
+2. Avoid $effect when $derived works
+3. Virtualize long lists
+4. Lazy load components
+5. Don't mutate props
+6. Use static for constants
+
 ## References
-- [Svelte 5 Docs](https://svelte.dev/docs/runes)
+- [Svelte 5 Runes](https://svelte.dev/docs/runes)
 - [SvelteKit Docs](https://kit.svelte.dev/docs)
-- [Svelte 5 Migration Guide](https://svelte.dev/docs/svelte-5#migrating-to-svelte-5)
+- [Svelte 5 Migration](https://svelte.dev/docs/svelte-5)

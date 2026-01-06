@@ -8,64 +8,54 @@ version: 1.0.0
 
 # Vue Composition API Specialist
 
-## Your Role
-You are a Vue 3 Composition API expert, focused on advanced reactivity patterns, composables design, and common pitfalls.
+## Checklist
 
-## Deep Dive Checklist
+### Reactivity
+- [ ] Correct choice: ref() vs reactive()
+- [ ] shallowRef vs ref understood
+- [ ] toRefs() to preserve reactivity
+- [ ] readonly() for immutability
+- [ ] customRef() for advanced control
 
-### Reactivity System Mastery
-- [ ] Correct choice between ref() and reactive()
-- [ ] Understanding of shallowRef vs ref
-- [ ] Proper use of toRefs() to preserve reactivity
-- [ ] readonly() and shallowReadonly() for immutable patterns
-- [ ] customRef() for advanced reactivity control
+### Composables
+- [ ] Composable and reusable
+- [ ] Return values typed
+- [ ] Side effects cleaned up
+- [ ] Accept injection keys
+- [ ] Lazy evaluation
 
-### Composables Architecture
-- [ ] Composables are composable (can be used together)
-- [ ] Return values are typed and documented
-- [ ] Side effects are properly cleaned up
-- [ ] Accept injection key for provide/inject pattern
-- [ ] Lazy evaluation where appropriate
+### Lifecycle
+- [ ] Hooks registered synchronously
+- [ ] onMounted/onUnmounted paired
+- [ ] onScopeDispose for cleanup
+- [ ] No hooks in conditionals
 
-### Lifecycle Hooks
-- [ ] Hooks registered synchronously in setup()
-- [ ] onMounted/onUnmounted paired for cleanup
-- [ ] onWatchPostEffect used for DOM updates
-- [ ] onScopeDispose for composable cleanup
-- [ ] No lifecycle hooks in conditional branches
+### Watch vs Computed
+- [ ] Computed for derived state
+- [ ] Watch only for side effects
+- [ ] watchEffect for auto-tracking
+- [ ] Proper cleanup in watch
 
-### Watchers vs Computed
-- [ ] Computed used for derived state (preferred)
-- [ ] Watch only for side effects (API calls, logging)
-- [ ] watchEffect for auto-tracking dependencies
-- [ ] watchPostEffect for DOM-dependent effects
-- [ ] Proper cleanup functions in watch
+## Advanced Patterns
 
-## Advanced Reactivity Patterns
-
-### Pattern 1: Composable Factories
+### Composable Factory
 ```ts
-// ✅ Good: Composable factory for multiple instances
-function useCounter(initialValue = 0) {
-  const count = ref(initialValue);
-
-  const increment = () => count.value++;
-  const decrement = () => count.value--;
-  const reset = () => count.value = initialValue;
-
-  return { count, increment, decrement, reset };
+function useCounter(initial = 0) {
+  const count = ref(initial);
+  return {
+    count,
+    increment: () => count.value++,
+    decrement: () => count.value--,
+    reset: () => count.value = initial
+  };
 }
 
-// Usage: can create multiple independent counters
 const counter1 = useCounter(0);
 const counter2 = useCounter(100);
 ```
 
-### Pattern 2: Shared State with Injection
+### Provide/Inject
 ```ts
-// ✅ Good: Provide/inject for shared state
-import { provide, inject, InjectionKey } from 'vue';
-
 const StateKey: InjectionKey<Ref<number>> = Symbol('state');
 
 export function provideState() {
@@ -76,14 +66,13 @@ export function provideState() {
 
 export function useState() {
   const state = inject(StateKey);
-  if (!state) throw new Error('State not provided');
+  if (!state) throw new Error('Not provided');
   return state;
 }
 ```
 
-### Pattern 3: Async Composables
+### Async Composable
 ```ts
-// ✅ Good: Handle async operations properly
 export function useAsyncData<T>(url: string) {
   const data = ref<T | null>(null);
   const error = ref<Error | null>(null);
@@ -91,8 +80,6 @@ export function useAsyncData<T>(url: string) {
 
   const fetch = async () => {
     loading.value = true;
-    error.value = null;
-
     try {
       data.value = await fetchData(url);
     } catch (e) {
@@ -103,68 +90,54 @@ export function useAsyncData<T>(url: string) {
   };
 
   onMounted(fetch);
-
   return { data, error, loading, refetch: fetch };
 }
 ```
 
-## Common Pitfalls
+## Pitfalls
 
-### ❌ Pitfall 1: Destructuring reactive
+### ❌ Destructuring reactive
 ```ts
-const state = reactive({
-  count: 0,
-  name: 'test'
-});
-
-// ❌ Loses reactivity!
-const { count, name } = state;
+const state = reactive({ count: 0, name: 'test' });
+const { count, name } = state; // ❌ Loses reactivity
 
 // ✅ Use toRefs
 const { count, name } = toRefs(state);
 ```
 
-### ❌ Pitfall 2: Reactive with ref
+### ❌ Reactive with ref
 ```ts
 // ❌ Wrapped in unnecessary ref
-const state = ref reactive({
-  count: 0
-});
+const state = ref reactive({ count: 0 });
 
-// ✅ Just use reactive directly
-const state = reactive({
-  count: 0
-});
+// ✅ Just use reactive
+const state = reactive({ count: 0 });
 ```
 
-### ❌ Pitfall 3: Watcher infinite loops
+### ❌ Watch infinite loop
 ```ts
 const count = ref(0);
 
 // ❌ Modifies watched value
-watch(count, (newVal) => {
-  count.value++; // Infinite loop!
-});
+watch(count, () => { count.value++; });
 
-// ✅ Use computed or different pattern
+// ✅ Use computed
 const doubled = computed(() => count.value * 2);
 ```
 
-### ❌ Pitfall 4: Async state updates
+### ❌ Async state updates
 ```ts
-// ❌ State update might happen after unmount
 const data = ref(null);
 
+// ❌ Race condition
 onMounted(async () => {
-  data.value = await fetchData(); // Race condition!
+  data.value = await fetchData();
 });
 
 // ✅ Track mounted state
 onMounted(async () => {
   const result = await fetchData();
-  if (isMounted.value) {
-    data.value = result;
-  }
+  if (isMounted.value) data.value = result;
 });
 ```
 
@@ -174,50 +147,72 @@ onMounted(async () => {
 ```ts
 // watch: Explicit dependencies
 const count = ref(0);
-watch(count, (newVal, oldVal) => {
-  console.log(`Count changed from ${oldVal} to ${newVal}`);
-});
+watch(count, (new, old) => console.log(`${old} → ${new}`));
 
-// watchEffect: Automatic tracking
-watchEffect(() => {
-  console.log(`Count is: ${count.value}`);
-});
+// watchEffect: Auto-tracking
+watchEffect(() => console.log(`Count: ${count.value}`));
 
 // watchPostEffect: After DOM update
 watchPostEffect(() => {
   // Access DOM elements
-  const element = document.querySelector('.target');
 });
 ```
 
-### Deep vs Shallow Watching
+### Deep vs Shallow
 ```ts
-const user = ref({
-  profile: {
-    name: 'test'
-  }
-});
+const user = ref({ profile: { name: 'test' } });
 
-// Deep watch (default) - expensive for large objects
-watch(user, () => {
-  console.log('User changed');
-}, { deep: true });
+// Deep watch (expensive)
+watch(user, () => {}, { deep: true });
 
-// Shallow watch - only top-level
-watch(user, () => {
-  console.log('User reference changed');
-}, { deep: false });
+// Shallow watch (top-level only)
+watch(user, () => {}, { deep: false });
 ```
 
 ## Performance Tips
 
-1. **Use computed for derived state** (cached, lazy)
-2. **Avoid watch when computed works** (more efficient)
-3. **Use shallowRef/shallowReactive** for large objects
-4. **Lazy load composables** only when needed
-5. **Clean up subscriptions** in onUnmounted
+1. Use computed for derived state (cached)
+2. Avoid watch when computed works
+3. Use shallowRef/shallowReactive for large objects
+4. Lazy load composables
+5. Clean up subscriptions
+
+## Composable Guidelines
+
+```ts
+// ✅ Good composable
+export function useMouse() {
+  const x = ref(0);
+  const y = ref(0);
+
+  const update = (e: MouseEvent) => {
+    x.value = e.clientX;
+    y.value = e.clientY;
+  };
+
+  onMounted(() => window.addEventListener('mousemove', update));
+  onUnmounted(() => window.removeEventListener('mousemove', update));
+
+  return { x, y };
+}
+```
+
+- Single purpose
+- Returns reactive refs
+- Proper cleanup
+- Accepts parameters
+- Composable with others
+
+## Best Practices
+
+1. Use ref for primitives, reactive for objects
+2. toRefs when destructuring reactive
+3. Computed > watch for derived state
+4. watchEffect for auto-tracking
+5. Clean up side effects
+6. Type all returns
 
 ## References
-- [Vue 3 Reactivity Fundamentals](https://vuejs.org/guide/essentials/reactivity-fundamentals.html)
-- [Vue 3 Composables](https://vuejs.org/guide/reusability/composables.html)
-- [VueUse - Collection of Vue Composables](https://vueuse.org/)
+- [Vue 3 Reactivity](https://vuejs.org/guide/essentials/reactivity-fundamentals.html)
+- [Composables](https://vuejs.org/guide/reusability/composables.html)
+- [VueUse](https://vueuse.org/)

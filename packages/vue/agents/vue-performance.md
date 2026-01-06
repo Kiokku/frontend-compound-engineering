@@ -6,329 +6,154 @@ frameworks: [vue, nuxt, quasar]
 version: 1.0.0
 ---
 
-# Vue Performance Optimization Specialist
+# Vue Performance Optimization
 
-## Your Role
-You are a Vue 3 performance expert specializing in reactivity optimization, rendering efficiency, and bundle size reduction.
+## Checklist
 
-## Performance Checklist
-
-### Reactivity Optimization
-- [ ] Use `shallowRef` instead of `ref` for large objects that don't need deep reactivity
-- [ ] Use `shallowReactive` for complex nested objects where only top-level changes matter
-- [ ] Prefer `computed` over `watch` for derived state (computed is lazy and cached)
-- [ ] Use `triggerRef` to manually trigger updates on `shallowRef` when needed
+### Reactivity
+- [ ] Use `shallowRef`/`shallowReactive` for large objects
+- [ ] Prefer `computed` over `watch` for derived state
 - [ ] Avoid unnecessary reactivity on static data
 
-### Rendering Performance
-- [ ] Implement `v-once` for static content that never changes
-- [ ] Use `v-memo` to cache expensive computations in v-for loops
-- [ ] Implement virtual scrolling for long lists (vue-virtual-scroller)
-- [ ] Use `defineAsyncComponent` for code splitting large components
-- [ ] Apply `v-show` vs `v-if` correctly (v-show for frequent toggles, v-if for conditional rendering)
+### Rendering
+- [ ] Use `v-once` for static content
+- [ ] Use `v-memo` in v-for for expensive items
+- [ ] Implement virtual scrolling (vue-virtual-scroller)
+- [ ] Use `defineAsyncComponent` for code splitting
+- [ ] Apply `v-show` vs `v-if` correctly
 
-### Component Optimization
-- [ ] Large components split into smaller, focused components
-- [ ] Functional components used for stateless presentation
-- [ ] Props kept minimal and primitive (avoid passing large objects)
-- [ ] Emitter events properly typed to reduce unnecessary updates
-- [ ] Component keep-alive used for expensive component state preservation
+### Component & Bundle
+- [ ] Split large components
+- [ ] Keep props minimal and primitive
+- [ ] Tree-shaking enabled
+- [ ] Lazy routes with dynamic imports
 
-### Bundle Size
-- [ ] Tree-shaking enabled (ES modules used)
-- [ ] Lazy routes implemented with dynamic imports
-- [ ] Unused dependencies removed from package.json
-- [ ] Server-side dependencies properly marked as external
-- [ ] Bundle analysis performed regularly
+## Key Patterns
 
-## Specific Optimization Patterns
-
-### Pattern 1: Shallow Reactivity for Large Data
+### Shallow Reactivity
 ```vue
-<script setup lang="ts">
-// ❌ Bad: Deep reactivity on large object
-const largeData = ref({
-  items: [], // 10,000+ items
-  metadata: { /* heavy object */ }
-});
-// Any nested change triggers deep reactivity overhead
+<script setup>
+// ❌ Bad: Deep reactivity overhead
+const largeData = ref({ items: [], metadata: {} });
 
-// ✅ Good: Shallow ref for large data
-const largeData = shallowRef({
-  items: [],
-  metadata: {}
-});
-
-// Manually trigger update when needed
-function updateItems(newItems) {
-  largeData.value = {
-    ...largeData.value,
-    items: newItems
-  };
-  triggerRef(largeData); // Force update
+// ✅ Good: Shallow ref
+const largeData = shallowRef({ items: [], metadata: {} });
+function update(newItems) {
+  largeData.value = { ...largeData.value, items: newItems };
+  triggerRef(largeData);
 }
 </script>
 ```
 
-### Pattern 2: v-memo for Expensive List Rendering
+### v-memo for Lists
 ```vue
 <template>
-  <!-- ❌ Bad: Re-renders all items on any state change -->
-  <div v-for="item in items" :key="item.id">
-    <expensive-component :data="item" />
-  </div>
-
-  <!-- ✅ Good: Only re-renders when item.id or item.updated changes -->
-  <div
-    v-for="item in items"
-    :key="item.id"
-    v-memo="[item.id, item.updated]"
-  >
+  <!-- ✅ Only re-renders when dependencies change -->
+  <div v-for="item in items" :key="item.id" v-memo="[item.id, item.updated]">
     <expensive-component :data="item" />
   </div>
 </template>
 ```
 
-### Pattern 3: Async Component Loading
+### Async Components
 ```vue
-<script setup lang="ts">
-// ❌ Bad: Synchronous import of large component
-import HeavyComponent from './HeavyComponent.vue';
-
-// ✅ Good: Async component with loading state
-const HeavyComponent = defineAsyncComponent({
-  loader: () => import('./HeavyComponent.vue'),
+<script setup>
+const Heavy = defineAsyncComponent({
+  loader: () => import('./Heavy.vue'),
   loadingComponent: LoadingSpinner,
-  errorComponent: ErrorDisplay,
-  delay: 200, // Show loading after 200ms
-  timeout: 5000 // Error after 5s
+  delay: 200,
+  timeout: 5000
 });
 </script>
 ```
 
-### Pattern 4: v-once for Static Content
+### v-once for Static Content
 ```vue
 <template>
-  <!-- ❌ Bad: Re-renders on every update -->
-  <div>
-    <h1>{{ staticTitle }}</h1>
-    <p>{{ staticDescription }}</p>
-    <ul>
-      <li v-for="item in staticList" :key="item">{{ item }}</li>
-    </ul>
-  </div>
-
-  <!-- ✅ Good: Renders once and never updates -->
+  <!-- Renders once, never updates -->
   <div v-once>
     <h1>{{ staticTitle }}</h1>
-    <p>{{ staticDescription }}</p>
-    <ul>
-      <li v-for="item in staticList" :key="item">{{ item }}</li>
-    </ul>
   </div>
 </template>
 ```
 
-### Pattern 5: Computed Caching
-```vue
-<script setup lang="ts">
-import { computed } from 'vue';
+## Common Pitfalls
 
-const items = ref<Item[]>([]);
-
-// ❌ Bad: Function runs on every access
-function getFilteredItems() {
-  return items.value.filter(item => item.active);
-}
-
-// ✅ Good: Computed caches result
-const filteredItems = computed(() => {
-  return items.value.filter(item => item.active);
-});
-
-// Only re-computed when items.value changes
-</script>
+### ❌ Static Data as Reactive
+```ts
+// ❌ Don't
+const config = reactive({ apiUrl: 'https://api.example.com' });
+// ✅ Do
+const config = { apiUrl: 'https://api.example.com' };
 ```
 
-## Common Performance Pitfalls
-
-### ❌ Pitfall 1: Unnecessary Reactive Wrappers
+### ❌ Watch vs Computed
 ```ts
-// ❌ Don't make static data reactive
-const config = reactive({
-  apiUrl: 'https://api.example.com', // Never changes
-  timeout: 5000 // Never changes
-});
-
-// ✅ Use plain constants
-const config = {
-  apiUrl: 'https://api.example.com',
-  timeout: 5000
-};
-```
-
-### ❌ Pitfall 2: Over-using Watch
-```ts
-// ❌ Watch for derived state (inefficient)
+// ❌ Inefficient
 const count = ref(0);
 const doubled = ref(0);
+watch(count, (v) => { doubled.value = v * 2; });
 
-watch(count, (newVal) => {
-  doubled.value = newVal * 2;
-});
-
-// ✅ Use computed (cached, efficient)
-const count = ref(0);
+// ✅ Efficient
 const doubled = computed(() => count.value * 2);
 ```
 
-### ❌ Pitfall 3: Large Inline Handlers
+### ❌ Inline Handlers
 ```vue
-<template>
-  <!-- ❌ Creates new function on every render -->
-  <button @click="() => count.value++">
-    Increment
-  </button>
-
-  <!-- ✅ Reuses function reference -->
-  <button @click="increment">
-    Increment
-  </button>
-</template>
-
-<script setup lang="ts">
-const increment = () => count.value++;
-</script>
+<!-- ❌ Creates function on each render -->
+<button @click="() => count++">Inc</button>
+<!-- ✅ Reuses reference -->
+<button @click="increment">Inc</button>
 ```
 
-### ❌ Pitfall 4: Reactive Props Destructuring
+### ❌ Props Destructuring
 ```vue
-<script setup lang="ts">
+<script setup>
 // ❌ Loses reactivity
-const props = defineProps<{ items: Item[] }>();
-const { items } = props; // Not reactive!
-
-// ✅ Use toRefs or access directly
-const props = defineProps<{ items: Item[] }>();
-const { items } = toRefs(props); // Preserves reactivity
+const { items } = defineProps<{ items: Item[] }>();
+// ✅ Preserves reactivity
+const { items } = toRefs(defineProps<{ items: Item[] }>());
 </script>
 ```
 
 ## Bundle Optimization
 
-### Route Splitting
 ```ts
-// ❌ Bad: Import all routes synchronously
-import Home from './views/Home.vue';
-import About from './views/About.vue';
-import Contact from './views/Contact.vue';
-
+// ✅ Lazy routes
 const routes = [
-  { path: '/', component: Home },
-  { path: '/about', component: About },
-  { path: '/contact', component: Contact }
-];
-
-// ✅ Good: Lazy load routes
-const routes = [
-  {
-    path: '/',
-    component: () => import('./views/Home.vue')
-  },
-  {
-    path: '/about',
-    component: () => import('./views/About.vue')
-  },
-  {
-    path: '/contact',
-    component: () => import('./views/Contact.vue')
-  }
+  { path: '/', component: () => import('./views/Home.vue') }
 ];
 ```
 
-### Dependency Optimization
-```json
-// package.json
-{
-  "dependencies": {
-    "vue": "^3.3.0"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-vue": "^4.0.0"
-  }
-}
-```
-
-## Virtual Scrolling Example
+## Virtual Scrolling
 ```vue
-<script setup lang="ts">
-import { ref } from 'vue';
+<script setup>
 import { useVirtualList } from '@vueuse/core';
-
-const items = ref(Array.from({ length: 10000 }, (_, i) => ({
-  id: i,
-  text: `Item ${i}`
-})));
-
-const { list, containerProps, wrapperProps } = useVirtualList(
-  items,
-  { itemHeight: 50 } // Only renders visible items
-);
+const { list, containerProps, wrapperProps } = useVirtualList(items, { itemHeight: 50 });
 </script>
 
 <template>
   <div v-bind="containerProps" style="height: 300px; overflow: auto;">
     <div v-bind="wrapperProps">
-      <div
-        v-for="{ data, index } in list"
-        :key="data.id"
-        style="height: 50px;"
-      >
-        {{ data.text }}
-      </div>
+      <div v-for="{ data } in list" :key="data.id">{{ data.text }}</div>
     </div>
   </div>
 </template>
 ```
 
-## Performance Measurement Tools
+## Best Practices
 
-### Vue DevTools
-- Component render time tracking
-- Props and reactivity inspection
-- Performance profiling mode
+1. Minimize reactive data (only trigger updates)
+2. Use computed for derived state
+3. Lazy load heavy components
+4. Virtual scroll 100+ item lists
+5. Profile with Vue DevTools
+6. Measure before optimizing
 
-### Vite Bundle Analysis
-```bash
-npm run build
-npm run build:analyze  # Visualize bundle
-```
-
-### Lighthouse CI
-```bash
-npm install -g @lhci/cli
-lhci autorun
-```
-
-## Performance Best Practices Summary
-
-1. **Minimize Reactive Data**: Only make data reactive if it needs to trigger updates
-2. **Use Computed**: Prefer computed properties over watchers for derived state
-3. **Lazy Load**: Use async components for heavy/lazy components
-4. **Virtual Scroll**: Implement for lists with 100+ items
-5. **Code Split**: Split routes and features into separate bundles
-6. **Profile Regularly**: Use Vue DevTools to identify performance bottlenecks
-7. **Avoid Premature Optimization**: Measure first, optimize bottlenecks
-
-## Performance Metrics to Track
-
-- **First Contentful Paint (FCP)**: < 1.8s
-- **Largest Contentful Paint (LCP)**: < 2.5s
-- **Time to Interactive (TTI)**: < 3.8s
-- **Cumulative Layout Shift (CLS)**: < 0.1
-- **Bundle Size**: Main bundle < 200KB gzipped
+## Metrics
+- FCP < 1.8s, LCP < 2.5s, TTI < 3.8s
+- Main bundle < 200KB gzipped
 
 ## References
 - [Vue 3 Performance Guide](https://vuejs.org/guide/best-practices/performance.html)
-- [VueUse - Performance Composables](https://vueuse.org/core/#performance)
-- [Web.dev Performance Metrics](https://web.dev/performance/)
+- [VueUse Performance](https://vueuse.org/core/#performance)
