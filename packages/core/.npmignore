@@ -1,0 +1,40 @@
+# Sensitive files
+.env*
+*.pem
+*.key
+secrets.json
+security-audit-report.json
+
+# Development files
+tests/
+*.test.js
+.test/
+coverage/
+.github/
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+.compound/logs/
+
+# Build artifacts
+dist/
+build/
+
+# Configuration
+vitest.config.js
+
+# Documentation (keep README)
+docs/
+*.md
+!README.md
+
+# CI/CD
+.gitlab-ci.yml
+.travis.yml
+
+# OS files
+.DS_Store
+Thumbs.db

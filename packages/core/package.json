@@ -8,9 +8,12 @@
     "compound": "./bin/cli.js"
   },
   "scripts": {
-    "postinstall": "node scripts/install.js",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "security:audit": "node scripts/security-audit.js",
+    "security:deps": "npm audit --audit-level=high",
+    "prepublishOnly": "node scripts/pre-publish-check.js",
+    "publish:safe": "npm run security:audit && npm run test:run && npm publish --access public"
   },
   "keywords": [
     "workflow",

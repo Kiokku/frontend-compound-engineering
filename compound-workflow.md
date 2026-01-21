@@ -710,9 +710,6 @@ cd packages/core
   "bin": {
     "compound": "./bin/cli.js"
   },
-  "scripts": {
-    "postinstall": "node scripts/install.js"
-  },
   "keywords": ["workflow", "agents", "claude", "cursor", "qoder"],
   "engines": {
     "node": ">=18.0.0"
@@ -729,7 +726,6 @@ cd packages/core
 **验收标准**:
 
 *   [x] 核心包独立可运行
-*   [x] 包含 postinstall 钩子
 *   [x] 二进制命令 `compound` 可执行
 *   [x] 支持插件式扩展
 
@@ -1765,8 +1761,7 @@ packages/core/
 │           ├── agent-suggester.md
 │           └── knowledge-recorder.md
 ├── scripts/
-│   ├── install.js           # postinstall 钩子
-│   ├── init.js              # npx compound-init
+│   ├── init.js              # npx compound init (统一初始化)
 │   └── adapters/
 │       ├── to-claude.js
 │       ├── to-cursor.js
@@ -1805,187 +1800,362 @@ packages/core/
 
 ***
 
-### 4.1 实现 postinstall 钩子
+### 4.1 实现统一初始化命令
 
-**文件**: `packages/core/scripts/install.js`
+**设计理念**：取消 postinstall 钩子，采用显式初始化方式，避免安全风险和侵入性问题。
+
+**关键改进**：
+- ✅ 显式优于隐式：用户明确授权所有文件操作
+- ✅ 一致的覆盖策略：工作流和代理统一采用「不覆盖已存在」（除非 `--force`）
+- ✅ CI/CD 友好：不依赖可能被禁用的 postinstall
+- ✅ 分阶段执行：基础设置 → 工具适配，职责清晰
+- ✅ 可恢复性：支持 `--force` / `--adapter-only` / `--setup-only`
+
+**文件**: `packages/core/scripts/init.js`
 
 ```javascript
 #!/usr/bin/env node
 
+/**
+ * Compound Workflow Init Script (Unified)
+ * 
+ * Phase 1: 项目基础设置（目录结构、核心文件、配置）
+ * Phase 2: AI 工具检测与适配器生成
+ */
+
+import { detectTool, getToolInfo, ToolType } from '../src/tool-detector.js';
+import { convertToClaudePlugin } from './adapters/to-claude.js';
+import { convertToQoderCommands } from './adapters/to-qoder.js';
+import { convertToCursorRules } from './adapters/to-cursor.js';
+import inquirer from 'inquirer';
 import path from 'path';
+import os from 'os';
 import fs from 'fs-extra';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-async function install() {
-  console.log('📦 Installing Compound Frontend Workflow...\n');
-  
-  // 获取项目根目录 (安装时的 cwd)
-  const projectRoot = process.env.INIT_CWD || process.cwd();
+/**
+ * 主初始化函数
+ */
+export async function init(options = {}) {
+  const {
+    force = false,
+    cursorLegacy = false,
+    adapterOnly = false,
+    setupOnly = false
+  } = options;
+
+  console.log('\n🚀 Compound Workflow Initialization\n');
+  console.log('━'.repeat(50));
+
+  const projectRoot = process.cwd();
+
+  // Phase 1: 项目基础设置
+  if (!adapterOnly) {
+    console.log('\n📦 Phase 1: Project Setup\n');
+    const setupResult = await runProjectSetup(projectRoot, { force });
+    
+    if (!setupResult.success) {
+      console.error('\n❌ Project setup failed.');
+      return;
+    }
+    console.log('\n✅ Phase 1 complete!\n');
+  }
+
+  if (setupOnly) {
+    console.log('\n━'.repeat(50));
+    console.log('\n✅ Project setup complete!');
+    console.log('\n📝 Next: Run `npx compound init --adapter-only`\n');
+    return;
+  }
+
+  // Phase 2: AI 工具适配器
+  console.log('━'.repeat(50));
+  console.log('\n🔧 Phase 2: AI Tool Adapter\n');
+  await runToolAdapter(projectRoot, { force, cursorLegacy });
+
+  console.log('\n━'.repeat(50));
+  console.log('\n🎉 Initialization complete!\n');
+}
+
+/**
+ * Phase 1: 项目基础设置（原 postinstall 的所有功能）
+ */
+async function runProjectSetup(projectRoot, options = {}) {
+  const { force = false } = options;
   const compoundDir = path.join(projectRoot, '.compound');
-  
-  // 获取 npm 包根目录
   const packageRoot = path.resolve(__dirname, '..');
   const sourceCompound = path.join(packageRoot, '.compound');
-  
-  // 1. 创建 .compound 目录结构
-  await fs.ensureDir(path.join(compoundDir, 'workflows'));
-  await fs.ensureDir(path.join(compoundDir, 'agents'));
-  await fs.ensureDir(path.join(compoundDir, 'docs'));
-  console.log('✓ Created .compound/ directory structure');
-  
-  // 2. 复制工作流文件 (始终复制)
-  if (await fs.pathExists(path.join(sourceCompound, 'workflows'))) {
-    await fs.copy(
-      path.join(sourceCompound, 'workflows'),
-      path.join(compoundDir, 'workflows'),
-      { overwrite: true }
-    );
-    console.log('✓ Copied core workflows');
-  }
-  
-  // 3. 复制核心代理 (不覆盖已存在的项目代理)
-  if (await fs.pathExists(path.join(sourceCompound, 'agents'))) {
-    const sourceAgents = await fs.readdir(path.join(sourceCompound, 'agents'));
-    for (const agent of sourceAgents) {
-      const targetPath = path.join(compoundDir, 'agents', agent);
-      // 只有当目标不存在时才复制 (保护项目级代理)
-      if (!await fs.pathExists(targetPath)) {
-        await fs.copy(
-          path.join(sourceCompound, 'agents', agent),
-          targetPath
-        );
-      }
+
+  const result = { success: true, created: [], copied: [], errors: [] };
+
+  try {
+    // 1. 创建目录结构
+    const directories = ['workflows', 'agents', 'docs', 'logs', 'adapters'];
+    for (const dir of directories) {
+      await fs.ensureDir(path.join(compoundDir, dir));
     }
-    console.log('✓ Copied core agents (preserved existing project agents)');
+    console.log('  ✓ Created .compound/ directory structure');
+
+    // 2. 复制核心工作流（不覆盖已存在的）
+    const workflowStats = await copyFiles({
+      sourceDir: path.join(sourceCompound, 'workflows'),
+      targetDir: path.join(compoundDir, 'workflows'),
+      pattern: '*.md',
+      overwrite: force
+    });
+    if (workflowStats.copied > 0 || workflowStats.skipped > 0) {
+      console.log(`  ✓ Workflows: ${workflowStats.copied} copied, ${workflowStats.skipped} preserved`);
+    }
+
+    // 3. 复制核心代理（不覆盖已存在的）
+    const agentStats = await copyFiles({
+      sourceDir: path.join(sourceCompound, 'agents'),
+      targetDir: path.join(compoundDir, 'agents'),
+      pattern: '*.md',
+      overwrite: force
+    });
+    if (agentStats.copied > 0 || agentStats.skipped > 0) {
+      console.log(`  ✓ Agents: ${agentStats.copied} copied, ${agentStats.skipped} preserved`);
+    }
+
+    // 4. 创建/更新配置文件
+    const configResult = await ensureConfig(compoundDir, { force });
+    console.log(`  ✓ Config: ${configResult.action}`);
+
+    // 5. 更新 .gitignore
+    const gitignoreResult = await updateGitignore(projectRoot);
+    if (gitignoreResult.updated) {
+      console.log('  ✓ Updated .gitignore');
+    }
+
+  } catch (error) {
+    result.success = false;
+    result.errors.push(error.message);
+    console.error(`  ✗ Error: ${error.message}`);
   }
-  
-  // 4. 创建默认配置文件
+
+  return result;
+}
+
+/**
+ * 复制文件（支持不覆盖策略）
+ */
+async function copyFiles({ sourceDir, targetDir, pattern, overwrite = false }) {
+  const stats = { copied: 0, skipped: 0, files: [] };
+
+  if (!await fs.pathExists(sourceDir)) return stats;
+
+  const files = await fs.readdir(sourceDir);
+  const matchedFiles = files.filter(f => pattern === '*.md' ? f.endsWith('.md') : true);
+
+  for (const file of matchedFiles) {
+    const sourcePath = path.join(sourceDir, file);
+    const targetPath = path.join(targetDir, file);
+
+    const stat = await fs.stat(sourcePath);
+    if (!stat.isFile()) continue;
+
+    const targetExists = await fs.pathExists(targetPath);
+
+    if (targetExists && !overwrite) {
+      stats.skipped++;
+    } else {
+      await fs.copy(sourcePath, targetPath, { overwrite: true });
+      stats.copied++;
+      stats.files.push(file);
+    }
+  }
+
+  return stats;
+}
+
+/**
+ * 确保配置文件存在
+ */
+async function ensureConfig(compoundDir, options = {}) {
+  const { force = false } = options;
   const configPath = path.join(compoundDir, 'config.json');
-  if (!await fs.pathExists(configPath)) {
-    await fs.writeJson(configPath, {
-      version: '0.1.0',
-      disabledAgents: [],
-      preferences: {
-        autoSuggestAgents: true,
-        verboseLogging: false
-      }
-    }, { spaces: 2 });
-    console.log('✓ Created default config.json');
+  const exists = await fs.pathExists(configPath);
+
+  if (exists && !force) {
+    return { action: 'preserved existing', path: configPath };
   }
-  
-  // 5. 添加到 .gitignore
+
+  const defaultConfig = {
+    version: '0.1.0',
+    tool: 'auto',
+    disabledAgents: [],
+    preferences: {
+      autoSuggestAgents: true,
+      verboseLogging: false,
+      recordSolutions: true
+    },
+    adapters: {
+      claude: { enabled: true },
+      cursor: { enabled: true, useLegacy: false },
+      qoder: { enabled: true }
+    }
+  };
+
+  // 如果 force=true，尝试合并保留用户设置
+  if (exists && force) {
+    try {
+      const existingConfig = await fs.readJson(configPath);
+      defaultConfig.disabledAgents = existingConfig.disabledAgents || [];
+      defaultConfig.preferences = { ...defaultConfig.preferences, ...existingConfig.preferences };
+    } catch { /* 忽略解析错误 */ }
+  }
+
+  await fs.writeJson(configPath, defaultConfig, { spaces: 2 });
+  return { action: exists ? 'reset (--force)' : 'created', path: configPath };
+}
+
+/**
+ * 更新 .gitignore
+ */
+async function updateGitignore(projectRoot) {
   const gitignorePath = path.join(projectRoot, '.gitignore');
-  const ignoreEntries = ['\n# Compound Workflow', '.compound/logs/', '.compound/docs/'];
-  if (await fs.pathExists(gitignorePath)) {
-    const content = await fs.readFile(gitignorePath, 'utf8');
-    if (!content.includes('.compound/logs/')) {
-      await fs.appendFile(gitignorePath, ignoreEntries.join('\n') + '\n');
-      console.log('✓ Updated .gitignore');
+  const entriesToAdd = [
+    '',
+    '# Compound Workflow (auto-generated)',
+    '.compound/logs/',
+    '.compound/docs/',
+    '.compound/adapters/'
+  ];
+  const marker = '# Compound Workflow';
+
+  try {
+    if (await fs.pathExists(gitignorePath)) {
+      const content = await fs.readFile(gitignorePath, 'utf8');
+      if (content.includes(marker)) {
+        return { updated: false, reason: 'already configured' };
+      }
+      await fs.appendFile(gitignorePath, entriesToAdd.join('\n') + '\n');
+      return { updated: true };
+    }
+    return { updated: false, reason: 'no .gitignore found' };
+  } catch (error) {
+    return { updated: false, reason: error.message };
+  }
+}
+
+/**
+ * Phase 2: AI 工具适配器
+ */
+async function runToolAdapter(projectRoot, options = {}) {
+  const { force = false, cursorLegacy = false } = options;
+  const detectedTool = detectTool();
+  
+  console.log(`  🔍 Detected: ${detectedTool.toUpperCase()}`);
+
+  let selectedTool = detectedTool;
+
+  if (detectedTool === ToolType.UNKNOWN) {
+    const { tool } = await inquirer.prompt([{
+      type: 'list',
+      name: 'tool',
+      message: 'Select your AI coding tool:',
+      choices: [
+        { name: 'Claude Code', value: ToolType.CLAUDE },
+        { name: 'Cursor IDE', value: ToolType.CURSOR },
+        { name: 'Qoder CLI', value: ToolType.QODER },
+        { name: 'Skip adapter setup', value: 'skip' }
+      ]
+    }]);
+
+    if (tool === 'skip') {
+      console.log('\n  ⏭️  Adapter setup skipped.');
+      return;
+    }
+    selectedTool = tool;
+  }
+
+  const toolInfo = getToolInfo(selectedTool);
+  if (toolInfo) {
+    console.log(`  📦 Tool: ${toolInfo.name}`);
+  }
+
+  if (!force) {
+    const { confirmed } = await inquirer.prompt([{
+      type: 'confirm',
+      name: 'confirmed',
+      message: `Generate ${selectedTool} adapter?`,
+      default: true
+    }]);
+    if (!confirmed) {
+      console.log('\n  ⏭️  Adapter generation skipped.');
+      return;
     }
   }
-  
-  console.log('\n✅ Installation complete!');
-  console.log('👉 Run: npx compound init');
-}
 
-install().catch(err => {
-  console.error('❌ Installation failed:', err.message);
-  process.exit(1);
-});
-```
-
-***
-
-### 4.2 实现 init 命令
-
-**文件**: `scripts/init.js`
-
-```javascript
-#!/usr/bin/env node
-
-import { detectTool } from './tool-detector.js';
-import { convertToClaudePlugin } from './adapters/to-claude.js';
-import { convertToQoderCommands } from './adapters/to-qoder.js';
-import { convertToCursorRules } from './adapters/to-cursor.js';
-import inquirer from 'inquirer';
-import os from 'os';
-import path from 'path';
-import fs from 'fs-extra';
-
-async function init() {
-  let tool = detectTool();  // 使用 let 以支持后续重新赋值
-  
-  if (tool === 'unknown') {
-    // 手动选择
-    const { selectedTool } = await inquirer.prompt([{
-      type: 'list',
-      name: 'selectedTool',
-      message: 'Select your AI coding tool:',
-      choices: ['Claude', 'Cursor', 'Qoder', 'Manual Setup']
-    }]);
-    tool = selectedTool.toLowerCase();
-  }
-  
-  console.log(`\n🔧 Detected: ${tool.toUpperCase()}\n`);
-  
-  switch (tool) {
-    case 'claude':
-      await setupClaude();
-      break;
-    case 'cursor':
-      await setupCursor();
-      break;
-    case 'qoder':
-      await setupQoder();
-      break;
-    default:
-      showManualInstructions();
-  }
-}
-
-async function setupClaude() {
-  convertToClaudePlugin();
-  
-  // 复制到 Claude 插件目录
   const homeDir = os.homedir();
-  const claudePluginDir = path.join(homeDir, '.claude/plugins/compound-frontend');
-  
-  copyDirectory('.compound/adapters/claude', claudePluginDir);
-  
-  console.log('✅ Claude plugin installed!');
-  console.log('👉 Refresh Claude: claude /plugin refresh');
-  console.log('👉 Try: /compound:plan "用户登录表单"');
+
+  switch (selectedTool) {
+    case ToolType.CLAUDE:
+      await setupClaude(projectRoot, homeDir);
+      break;
+    case ToolType.CURSOR:
+      await setupCursor(projectRoot, { cursorLegacy });
+      break;
+    case ToolType.QODER:
+      await setupQoder(projectRoot, homeDir);
+      break;
+  }
 }
 
-async function setupCursor() {
-  convertToCursorRules();
-  console.log('✅ .cursorrules generated!');
-  console.log('👉 Restart Cursor to apply changes');
-}
+// setupClaude, setupCursor, setupQoder 函数保持原有实现
+// ...
 
-async function setupQoder() {
-  convertToQoderCommands();
-  console.log('✅ Qoder commands ready!');
-  console.log('👉 Copy commands to Qoder:');
-  console.log('   cp .compound/adapters/qoder/commands/* ~/.qoder/commands/');
-}
+// CLI 入口
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const args = process.argv.slice(2);
+  const options = {
+    force: args.includes('--force'),
+    cursorLegacy: args.includes('--cursor-legacy'),
+    adapterOnly: args.includes('--adapter-only'),
+    setupOnly: args.includes('--setup-only')
+  };
 
-init().catch(console.error);
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(`
+Compound Workflow Init
+
+Usage:
+  npx compound init [options]
+
+Options:
+  --force           Reset existing files
+  --adapter-only    Skip project setup, only configure adapter
+  --setup-only      Only run project setup
+  --cursor-legacy   Use legacy .cursorrules format
+  --help, -h        Show this help
+`);
+    process.exit(0);
+  }
+
+  init(options).catch(error => {
+    console.error('\n❌ Initialization failed:', error.message);
+    process.exit(1);
+  });
+}
 ```
 
 **验收标准**:
 
-*   [x] 自动检测工具类型
-*   [x] 未检测到时提供选择界面
-*   [x] 根据不同工具执行对应安装流程
-*   [x] 提供清晰的后续操作提示
+*   [x] 取消 postinstall 钩子，避免安全风险
+*   [x] 显式初始化，用户明确授权
+*   [x] 工作流和代理统一不覆盖策略
+*   [x] 支持 `--force` 重置
+*   [x] 支持 `--adapter-only` / `--setup-only` 分阶段执行
+*   [x] CI/CD 环境下稳定可用
+*   [x] 保留用户配置（force 时智能合并）
 
 ***
 
-### 4.3 实现代理管理 CLI
+### 4.2 实现代理管理 CLI
 
 **新增命令**: `compound agents`
 
@@ -2425,7 +2595,6 @@ compound agents update react-reviewer
     "compound": "./bin/cli.js"
   },
   "scripts": {
-    "postinstall": "node scripts/install.js",
     "test": "vitest"
   },
   "keywords": ["workflow", "agents", "ai-coding"],
@@ -2924,8 +3093,7 @@ npm publish --access public
 | npm 包形式分发                   | 前端生态标准,版本管理方便     |
 | 适配器模式                       | 解耦核心逻辑与工具特性,易扩展   |
 | Markdown + YAML             | 可读性强,工具无关,易维护     |
-| postinstall 钩子              | 自动设置基础结构,减少手动操作   |
-| 独立 init 命令                  | 用户可控的环境配置,支持多次运行  |
+| 显式 init 命令                | 用户明确授权,CI/CD 友好,安全性高  |
 
 ***
 

@@ -27,3 +27,7 @@ compound-engineering/
 *.swp
 *.swo
 .claude/
+# Compound Workflow (auto-generated)
+.compound/logs/
+.compound/docs/
+.compound/adapters/

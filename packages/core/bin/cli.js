@@ -36,28 +36,15 @@ agentsCmd
   .description('List all installed and available agents')
   .action(async () => {
     try {
-      const { AgentLoader } = await import('../src/agent-loader.js');
-      const loader = new AgentLoader();
-      const agents = await loader.listAgents();
-
-      console.log('\n📦 Installed Agents:\n');
-
-      if (agents.length === 0) {
-        console.log('   (No agents installed)');
-      } else {
-        agents.forEach(agent => {
-          const icon = {
-            project: '📌',
-            user: '👤',
-            package: '📦'
-          }[agent.source] || '📄';
-          console.log(`   ${icon} ${agent.name} (${agent.source})`);
-        });
-      }
-
-      console.log('\n💡 Tip: Use "compound agents add <name>" to install more agents\n');
+      const { AgentManager } = await import('../src/agent-manager.js');
+      const agentManager = new AgentManager();
+      await agentManager.list();
     } catch (error) {
       console.error('❌ Failed to list agents:', error.message);
+      if (process.env.DEBUG === 'true') {
+        console.error('\nStack trace:');
+        console.error(error.stack);
+      }
       process.exit(1);
     }
   });
@@ -68,9 +55,18 @@ agentsCmd
   .description('Add an agent from library')
   .option('-g, --global', 'Install globally to ~/.compound/agents/')
   .action(async (name, options) => {
-    console.log(`📥 Adding agent: ${name}${options.global ? ' (global)' : ''}...`);
-    // TODO: 实现代理添加逻辑 (Phase 4.3)
-    console.log('⚠️  Agent add functionality will be implemented in Phase 4.3');
+    try {
+      const { AgentManager } = await import('../src/agent-manager.js');
+      const agentManager = new AgentManager();
+      await agentManager.add(name, options);
+    } catch (error) {
+      console.error('❌ Failed to add agent:', error.message);
+      if (process.env.DEBUG === 'true') {
+        console.error('\nStack trace:');
+        console.error(error.stack);
+      }
+      process.exit(1);
+    }
   });
 
 // agents remove <name>
@@ -78,9 +74,18 @@ agentsCmd
   .command('remove <name>')
   .description('Remove a project or user agent')
   .action(async (name) => {
-    console.log(`🗑️  Removing agent: ${name}...`);
-    // TODO: 实现代理移除逻辑 (Phase 4.3)
-    console.log('⚠️  Agent remove functionality will be implemented in Phase 4.3');
+    try {
+      const { AgentManager } = await import('../src/agent-manager.js');
+      const agentManager = new AgentManager();
+      await agentManager.remove(name);
+    } catch (error) {
+      console.error('❌ Failed to remove agent:', error.message);
+      if (process.env.DEBUG === 'true') {
+        console.error('\nStack trace:');
+        console.error(error.stack);
+      }
+      process.exit(1);
+    }
   });
 
 // agents update <name>
@@ -88,9 +93,18 @@ agentsCmd
   .command('update <name>')
   .description('Update an agent to latest version')
   .action(async (name) => {
-    console.log(`🔄 Updating agent: ${name}...`);
-    // TODO: 实现代理更新逻辑 (Phase 4.3)
-    console.log('⚠️  Agent update functionality will be implemented in Phase 4.3');
+    try {
+      const { AgentManager } = await import('../src/agent-manager.js');
+      const agentManager = new AgentManager();
+      await agentManager.update(name);
+    } catch (error) {
+      console.error('❌ Failed to update agent:', error.message);
+      if (process.env.DEBUG === 'true') {
+        console.error('\nStack trace:');
+        console.error(error.stack);
+      }
+      process.exit(1);
+    }
   });
 
 // ========================================
@@ -146,11 +160,11 @@ adaptersCmd
 program
   .command('init')
   .description('Initialize compound workflow for your AI tool')
-  .option('--cursor-legacy', 'Use legacy .cursorrules format')
-  .option('--force', 'Overwrite existing configuration')
+  .option('--force', 'Reset existing files (overwrites workflows, agents, config)')
+  .option('--cursor-legacy', 'Use legacy .cursorrules format instead of .cursor/rules/')
+  .option('--adapter-only', 'Skip project setup, only configure adapter')
+  .option('--setup-only', 'Only run project setup, skip adapter configuration')
   .action(async (options) => {
-    console.log('\n🔧 Initializing Compound Workflow...\n');
-
     try {
       // 动态导入 init 脚本
       const initPath = path.resolve(__dirname, '../scripts/init.js');
